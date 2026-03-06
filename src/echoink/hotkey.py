@@ -1,6 +1,7 @@
 """Global hotkey handling with platform-specific backends."""
 
 import os
+import sys
 import threading
 import time
 from typing import Callable
@@ -13,9 +14,9 @@ def is_wayland() -> bool:
     The xdg-desktop-portal GlobalShortcuts is experimental and doesn't work
     reliably on all desktop environments (e.g., KDE Plasma).
 
-    Set TURBO_WHISPER_USE_PORTAL=1 to try the portal backend.
+    Set ECHOINK_USE_PORTAL=1 to try the portal backend.
     """
-    if os.environ.get("TURBO_WHISPER_USE_PORTAL") == "1":
+    if os.environ.get("ECHOINK_USE_PORTAL") == "1":
         return os.environ.get("XDG_SESSION_TYPE") == "wayland"
     return False  # Default to pynput (works via XWayland)
 
@@ -68,7 +69,7 @@ class PortalHotkeyManager:
 
     def _on_activated(self, session_handle, shortcut_id, timestamp, options):
         """Handle shortcut activation."""
-        if shortcut_id == "turbo-whisper-toggle":
+        if shortcut_id == "echoink-toggle":
             self.callback()
 
     def _on_session_created(self, response, results):
@@ -97,9 +98,9 @@ class PortalHotkeyManager:
         # Bind the shortcut
         shortcuts = [
             (
-                "turbo-whisper-toggle",
+                "echoink-toggle",
                 {
-                    "description": self._dbus.String("Toggle Turbo Whisper recording"),
+                    "description": self._dbus.String("Toggle EchoInk recording"),
                     "preferred-trigger": self._dbus.String(self.hotkey_str),
                 },
             ),
@@ -131,8 +132,8 @@ class PortalHotkeyManager:
 
         # Create session
         options = {
-            "handle_token": self._dbus.String("turbo_whisper"),
-            "session_handle_token": self._dbus.String("turbo_whisper_session"),
+            "handle_token": self._dbus.String("echoink"),
+            "session_handle_token": self._dbus.String("echoink_session"),
         }
 
         try:
@@ -315,9 +316,180 @@ class HotkeyManager:
             self.listener = None
 
 
+class WindowsHotkeyManager:
+    """Global hotkey manager for Windows using RegisterHotKey API."""
+
+    # Windows constants
+    _WM_HOTKEY = 0x0312
+    _WM_QUIT = 0x0012
+    _MOD_ALT = 0x0001
+    _MOD_CONTROL = 0x0002
+    _MOD_SHIFT = 0x0004
+    _MOD_WIN = 0x0008
+    _MOD_NOREPEAT = 0x4000
+
+    def __init__(self, hotkey_combo: list[str], callback: Callable[[], None]):
+        import ctypes
+        from ctypes import wintypes
+
+        self.callback = callback
+        self._hotkey_combo = [k.lower() for k in hotkey_combo]
+        self._running = False
+        self._thread = None
+        self._thread_id = None
+        self._registered = False
+        self._hotkey_id = 1
+        self._ready_event = threading.Event()
+        self._start_error = None
+        self._ctypes = ctypes
+        self._wintypes = wintypes
+        self._user32 = ctypes.windll.user32
+        self._kernel32 = ctypes.windll.kernel32
+
+    def _parse_hotkey(self) -> tuple[int, int]:
+        """Parse config hotkey to (modifiers, virtual_key)."""
+        modifiers = 0
+        vk = None
+
+        key_map = {
+            "space": 0x20,
+            "tab": 0x09,
+            "enter": 0x0D,
+            "esc": 0x1B,
+            "escape": 0x1B,
+            "backspace": 0x08,
+        }
+
+        for key in self._hotkey_combo:
+            if key in ("alt", "alt_l", "alt_r"):
+                modifiers |= self._MOD_ALT
+            elif key in ("ctrl", "control", "ctrl_l", "ctrl_r"):
+                modifiers |= self._MOD_CONTROL
+            elif key in ("shift", "shift_l", "shift_r"):
+                modifiers |= self._MOD_SHIFT
+            elif key in ("super", "win", "cmd"):
+                modifiers |= self._MOD_WIN
+            elif key.startswith("f") and key[1:].isdigit():
+                fn = int(key[1:])
+                if 1 <= fn <= 24:
+                    vk = 0x70 + (fn - 1)  # VK_F1..VK_F24
+            elif len(key) == 1 and key.isalpha():
+                vk = ord(key.upper())  # VK_A..VK_Z
+            elif len(key) == 1 and key.isdigit():
+                vk = ord(key)  # VK_0..VK_9
+            elif key in key_map:
+                vk = key_map[key]
+
+        if vk is None:
+            raise ValueError(f"Hotkey must include one non-modifier key: {self._hotkey_combo}")
+
+        # Prevent repeated triggers while key is held down.
+        modifiers |= self._MOD_NOREPEAT
+        return modifiers, vk
+
+    def _message_loop(self) -> None:
+        """Run Windows message loop for WM_HOTKEY events."""
+        ctypes = self._ctypes
+        wintypes = self._wintypes
+
+        self._thread_id = self._kernel32.GetCurrentThreadId()
+
+        try:
+            modifiers, vk = self._parse_hotkey()
+            if not self._user32.RegisterHotKey(None, self._hotkey_id, modifiers, vk):
+                self._start_error = RuntimeError(
+                    f"Failed to register global hotkey: {self._hotkey_combo}"
+                )
+                return
+
+            self._registered = True
+            msg = wintypes.MSG()
+            self._ready_event.set()
+
+            while self._running:
+                ret = self._user32.GetMessageW(ctypes.byref(msg), None, 0, 0)
+                if ret == 0 or ret == -1:
+                    break
+                if msg.message == self._WM_HOTKEY and msg.wParam == self._hotkey_id:
+                    self.callback()
+                self._user32.TranslateMessage(ctypes.byref(msg))
+                self._user32.DispatchMessageW(ctypes.byref(msg))
+        finally:
+            if self._registered:
+                self._user32.UnregisterHotKey(None, self._hotkey_id)
+                self._registered = False
+            self._ready_event.set()
+
+    def start(self) -> None:
+        """Register hotkey and start message loop thread."""
+        if self._running:
+            return
+
+        self._running = True
+        self._start_error = None
+        self._thread_id = None
+        self._ready_event.clear()
+        self._thread = threading.Thread(target=self._message_loop, daemon=True)
+        self._thread.start()
+
+        # Wait briefly for registration outcome.
+        self._ready_event.wait(timeout=2.0)
+        if self._start_error:
+            self._running = False
+            raise self._start_error
+        if not self._registered:
+            self._running = False
+            raise RuntimeError("Hotkey listener failed to start")
+
+    def stop(self) -> None:
+        """Unregister hotkey and stop message loop."""
+        if not self._running and not self._registered:
+            return
+
+        self._running = False
+
+        if self._thread_id:
+            # Wake the message loop and exit cleanly.
+            self._user32.PostThreadMessageW(self._thread_id, self._WM_QUIT, 0, 0)
+
+        if self._thread:
+            self._thread.join(timeout=1.0)
+        self._thread = None
+        self._thread_id = None
+
+
+class FallbackHotkeyManager:
+    """Try one hotkey backend, then fallback to another if needed."""
+
+    def __init__(self, primary, fallback):
+        self._primary = primary
+        self._fallback = fallback
+        self._active = None
+
+    def start(self) -> None:
+        """Start primary backend; fallback on failure."""
+        try:
+            self._primary.start()
+            self._active = self._primary
+        except Exception as e:
+            print(f"Windows hotkey backend failed ({e}), falling back to pynput")
+            self._fallback.start()
+            self._active = self._fallback
+
+    def stop(self) -> None:
+        """Stop whichever backend is active."""
+        if self._active:
+            self._active.stop()
+            self._active = None
+        else:
+            # Best effort cleanup in case start was never called
+            self._primary.stop()
+            self._fallback.stop()
+
+
 def create_hotkey_manager(
     hotkey_combo: list[str], callback: Callable[[], None]
-) -> HotkeyManager | PortalHotkeyManager | None:
+) -> HotkeyManager | PortalHotkeyManager | WindowsHotkeyManager | FallbackHotkeyManager | None:
     """
     Create appropriate hotkey manager for the current platform.
 
@@ -326,6 +498,11 @@ def create_hotkey_manager(
         PortalHotkeyManager for Wayland
         None if no backend is available
     """
+    if sys.platform == "win32":
+        return FallbackHotkeyManager(
+            WindowsHotkeyManager(hotkey_combo, callback),
+            HotkeyManager(hotkey_combo, callback),
+        )
     if is_wayland():
         try:
             manager = PortalHotkeyManager(hotkey_combo, callback)

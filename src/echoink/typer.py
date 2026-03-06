@@ -3,6 +3,7 @@
 import platform
 import shutil
 import subprocess
+import threading
 
 SYSTEM = platform.system()
 
@@ -30,7 +31,7 @@ class Typer:
 
             # Try to create UInput device
             cap = {ecodes.EV_KEY: list(range(1, 128))}
-            self._uinput = UInput(cap, name="turbo-whisper-keyboard")
+            self._uinput = UInput(cap, name="echoink-keyboard")
             self._evdev_available = True
         except PermissionError:
             print("evdev: Permission denied for /dev/uinput")
@@ -149,12 +150,13 @@ class Typer:
         }
         return key_map
 
-    def type_text(self, text: str) -> bool:
+    def type_text(self, text: str, stop_event: threading.Event | None = None) -> bool:
         """
         Type text into the currently focused window.
 
         Args:
             text: Text to type
+            stop_event: Optional cancellation event
 
         Returns:
             True if successful, False otherwise
@@ -163,11 +165,11 @@ class Typer:
             return False
 
         if self.system == "Windows" or self.system == "Darwin":
-            return self._type_pyautogui(text)
+            return self._type_pyautogui(text, stop_event=stop_event)
         else:
-            return self._type_linux(text)
+            return self._type_linux(text, stop_event=stop_event)
 
-    def _type_pyautogui(self, text: str) -> bool:
+    def _type_pyautogui(self, text: str, stop_event: threading.Event | None = None) -> bool:
         """Type text using PyAutoGUI (Windows/macOS)."""
         try:
             import time
@@ -176,13 +178,26 @@ class Typer:
 
             # Small delay to let focus settle
             time.sleep(0.1)
-            pyautogui.write(text, interval=0.01)
+
+            if stop_event is None:
+                pyautogui.write(text, interval=max(0.0, self._typing_delay))
+                return True
+
+            # Chunked typing keeps cancelability while restoring most of original speed.
+            chunk_size = 12
+            for i in range(0, len(text), chunk_size):
+                if stop_event.is_set():
+                    return False
+                chunk = text[i : i + chunk_size]
+                pyautogui.write(chunk, interval=0)
+                if self._typing_delay > 0:
+                    time.sleep(self._typing_delay * len(chunk))
             return True
         except Exception as e:
             print(f"PyAutoGUI typing error: {e}")
             return self.copy_to_clipboard(text)
 
-    def _type_linux(self, text: str) -> bool:
+    def _type_linux(self, text: str, stop_event: threading.Event | None = None) -> bool:
         """Type text on Linux using evdev UInput."""
         import time
 
@@ -191,7 +206,7 @@ class Typer:
 
         if self._evdev_available and self._uinput:
             try:
-                return self._type_evdev(text)
+                return self._type_evdev(text, stop_event=stop_event)
             except Exception as e:
                 print(f"evdev typing failed: {e}")
 
@@ -199,7 +214,18 @@ class Typer:
         try:
             import pyautogui
 
-            pyautogui.write(text, interval=0.01)
+            if stop_event is None:
+                pyautogui.write(text, interval=max(0.0, self._typing_delay))
+                return True
+
+            chunk_size = 12
+            for i in range(0, len(text), chunk_size):
+                if stop_event.is_set():
+                    return False
+                chunk = text[i : i + chunk_size]
+                pyautogui.write(chunk, interval=0)
+                if self._typing_delay > 0:
+                    time.sleep(self._typing_delay * len(chunk))
             return True
         except Exception as e:
             print(f"PyAutoGUI fallback failed: {e}")
@@ -211,13 +237,15 @@ class Typer:
 
         return False
 
-    def _type_evdev(self, text: str) -> bool:
+    def _type_evdev(self, text: str, stop_event: threading.Event | None = None) -> bool:
         """Type text using evdev UInput (works on Wayland)."""
         import time
 
         ecodes = self._ecodes
 
         for char in text:
+            if stop_event and stop_event.is_set():
+                return False
             if char in self._key_map:
                 keycode, needs_shift = self._key_map[char]
 

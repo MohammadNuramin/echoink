@@ -1,4 +1,4 @@
-"""Configuration management for Turbo Whisper."""
+"""Configuration management for EchoInk."""
 
 import json
 import os
@@ -32,10 +32,6 @@ class HistoryEntry(TypedDict, total=False):
 class Config:
     """Application configuration."""
 
-    # API settings
-    api_url: str = "https://whisper.weeksfamily.me/v1/audio/transcriptions"
-    api_key: str = ""
-
     # Hotkey settings (using pynput key names)
     # Default: F8 on Windows (Alt+Space conflicts with window menu)
     #          Alt+Space on Linux/macOS
@@ -49,7 +45,7 @@ class Config:
     input_device_name: str = ""  # For display purposes
 
     # UI settings
-    waveform_color: str = "#84cc16"  # KnowAll.ai lime green
+    waveform_color: str = "#84cc16"
     background_color: str = "#1a1a2e"
     window_width: int = 520
     window_height: int = 260  # Taller window for bigger waveform
@@ -59,11 +55,17 @@ class Config:
     copy_to_clipboard: bool = True
     language: str = "en"
     typing_delay_ms: int = 5  # Milliseconds between keystrokes (increase if terminal freezes)
+    max_auto_type_chars: int = 500  # Safety cap: skip auto-typing very long transcriptions
+    max_recording_seconds: int = 45  # Safety cap: auto-stop recording if stop signal is missed
 
-    # Claude Code integration
-    claude_integration: bool = True  # Enable integration server for Claude Code
-    claude_integration_port: int = 7878  # Port for integration HTTP server
-    claude_wait_timeout: float = 30.0  # Max seconds to wait for Claude ready signal
+    # Floating hold-to-talk button
+    hold_to_talk_button: bool = True
+    hold_to_talk_x: int | None = None
+    hold_to_talk_y: int | None = None
+
+    # External tool integration (file-based, no ports)
+    external_integration: bool = True  # Enable file-based external tool integration
+    integration_timeout: float = 30.0  # Max seconds to wait for ready signal
 
     # History (recent transcriptions)
     history: list[HistoryEntry] = field(default_factory=list)
@@ -77,7 +79,7 @@ class Config:
             config_dir = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
         else:
             config_dir = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
-        recordings_dir = config_dir / "turbo-whisper" / "recordings"
+        recordings_dir = config_dir / "echoink" / "recordings"
         recordings_dir.mkdir(parents=True, exist_ok=True)
         return recordings_dir
 
@@ -140,7 +142,7 @@ class Config:
         else:
             # Linux/macOS: use XDG_CONFIG_HOME
             config_dir = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
-        return config_dir / "turbo-whisper" / "config.json"
+        return config_dir / "echoink" / "config.json"
 
     @classmethod
     def load(cls) -> "Config":
@@ -151,19 +153,28 @@ class Config:
             try:
                 with open(config_path) as f:
                     data = json.load(f)
+                if not isinstance(data, dict):
+                    print("Warning: config file is not a JSON object, using defaults")
+                    return cls()
                 # Migrate old string-based history to new format
                 if "history" in data and data["history"]:
                     migrated = []
                     for entry in data["history"]:
                         if isinstance(entry, str):
-                            # Old format: just a string
                             migrated.append({"text": entry, "timestamp": ""})
-                        else:
-                            # New format: dict with text and timestamp
+                        elif isinstance(entry, dict) and "text" in entry:
                             migrated.append(entry)
+                        # Skip malformed entries
                     data["history"] = migrated
+                # Strip removed config fields for backward compatibility
+                data.pop("claude_integration_port", None)
+                data.pop("api_url", None)
+                data.pop("api_key", None)
+                # Strip any unknown fields to prevent TypeError
+                known_fields = {f.name for f in __import__("dataclasses").fields(cls)}
+                data = {k: v for k, v in data.items() if k in known_fields}
                 return cls(**data)
-            except (json.JSONDecodeError, TypeError) as e:
+            except Exception as e:
                 print(f"Warning: Could not load config: {e}")
 
         return cls()

@@ -1,12 +1,12 @@
 [project]
-name = "turbo-whisper"
-version = "1.0.2"
-description = "SuperWhisper-like voice dictation with waveform UI - cross-platform"
+name = "echoink"
+version = "1.0.0"
+description = "Voice dictation app — speak and your words appear instantly in any window"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [
-    { name = "KnowAll AI", email = "ben.weeks@outlook.com" }
+    { name = "MohammadNuramin" }
 ]
 keywords = ["voice", "dictation", "whisper", "speech-to-text", "linux", "windows", "macos"]
 classifiers = [
@@ -27,7 +27,7 @@ dependencies = [
     "PyQt6>=6.4.0",
     "pyaudio>=0.2.13",
     "numpy>=1.24.0",
-    "httpx>=0.24.0",
+    "faster-whisper>=1.0.0",
     "pynput>=1.7.6",
     "python-xlib>=0.33",
     "pyautogui>=0.9.54",
@@ -51,20 +51,20 @@ dev = [
     "ruff>=0.1.0",
 ]
 
-[project.scripts]
-turbo-whisper = "turbo_whisper.main:main"
+[project.gui-scripts]
+echoink = "echoink._entry:main"
 
 [project.urls]
-Homepage = "https://github.com/knowall-ai/turbo-whisper"
-Repository = "https://github.com/knowall-ai/turbo-whisper"
-Issues = "https://github.com/knowall-ai/turbo-whisper/issues"
+Homepage = "https://github.com/MohammadNuramin/echoink"
+Repository = "https://github.com/MohammadNuramin/echoink"
+Issues = "https://github.com/MohammadNuramin/echoink/issues"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/turbo_whisper"]
+packages = ["src/echoink"]
 
 [tool.black]
 line-length = 100
@@ -77,4 +77,4 @@ line-length = 100
 select = ["E", "F", "I", "W"]
 
 [tool.ruff.lint.per-file-ignores]
-"src/turbo_whisper/icons.py" = ["E501"]  # SVG strings are naturally long
+"src/echoink/icons.py" = ["E501"]  # SVG strings are naturally long

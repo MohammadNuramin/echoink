@@ -1,8 +1,8 @@
-"""Turbo Whisper - SuperWhisper-like voice dictation for Linux."""
+"""EchoInk - SuperWhisper-like voice dictation for Linux."""
 
 from importlib.metadata import version, PackageNotFoundError
 
 try:
-    __version__ = version("turbo-whisper")
+    __version__ = version("echoink")
 except PackageNotFoundError:
     __version__ = "0.0.0"  # Fallback for development

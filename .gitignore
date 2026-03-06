@@ -42,5 +42,6 @@ config.json
 .env
 .env.local
 
-# Claude Code local settings (machine-specific)
-.claude/settings.local.json
+# Local tool settings (machine-specific)
+.claude/
+launch-turbo-whisper.cmd

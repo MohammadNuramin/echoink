@@ -110,13 +110,17 @@ class AudioRecorder:
         self.is_recording = True
 
         # Use simple defaults - let PyAudio/PipeWire handle device routing
-        self.stream = self.audio.open(
-            format=pyaudio.paInt16,
-            channels=self.config.channels,
-            rate=self.config.sample_rate,
-            input=True,
-            frames_per_buffer=self.config.chunk_size,
-        )
+        try:
+            self.stream = self.audio.open(
+                format=pyaudio.paInt16,
+                channels=self.config.channels,
+                rate=self.config.sample_rate,
+                input=True,
+                frames_per_buffer=self.config.chunk_size,
+            )
+        except Exception as e:
+            self.is_recording = False
+            raise RuntimeError(f"Could not open microphone: {e}") from e
 
         self._record_thread = threading.Thread(target=self._record_loop, daemon=True)
         self._record_thread.start()
@@ -147,11 +151,17 @@ class AudioRecorder:
         self.is_recording = False
 
         if self._record_thread:
-            self._record_thread.join(timeout=1.0)
+            self._record_thread.join(timeout=5.0)
+            if self._record_thread.is_alive():
+                print("Warning: recording thread did not exit cleanly")
+            self._record_thread = None
 
         if self.stream:
-            self.stream.stop_stream()
-            self.stream.close()
+            try:
+                self.stream.stop_stream()
+                self.stream.close()
+            except Exception as e:
+                print(f"Warning: stream cleanup error: {e}")
             self.stream = None
 
         wav_buffer = io.BytesIO()

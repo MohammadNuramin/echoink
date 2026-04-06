@@ -6,7 +6,7 @@ from pathlib import Path
 
 from .config import Config
 
-MODEL_NAME = "Systran/faster-whisper-small.en"
+MODEL_NAME = "Systran/faster-whisper-medium.en"
 
 _model = None
 _model_lock = threading.Lock()
@@ -19,7 +19,7 @@ class WhisperAPIError(Exception):
 
 
 def _load_model():
-    """Load the Whisper model. Downloads on first run (~460MB)."""
+    """Load the Whisper model. Downloads on first run (~1.5GB)."""
     import struct
     import wave as _wave
     import tempfile
@@ -36,7 +36,7 @@ def _load_model():
         return path
 
     # Try GPU first, fall back to CPU automatically
-    for device, compute in [("cuda", "float16"), ("cpu", "int8")]:
+    for device, compute in [("cuda", "int8_float16"), ("cuda", "float16"), ("cpu", "int8")]:
         try:
             model = WhisperModel(MODEL_NAME, device=device, compute_type=compute)
             # Verify inference actually works (cuBLAS/cuDNN may be missing even
@@ -106,9 +106,9 @@ class WhisperClient:
             segments, _info = model.transcribe(
                 tmp_path,
                 language="en",
-                beam_size=5,
+                beam_size=1,
                 vad_filter=True,
-                vad_parameters={"min_silence_duration_ms": 500},
+                vad_parameters={"min_silence_duration_ms": 300},
             )
             text = " ".join(seg.text.strip() for seg in segments)
             return text.strip()

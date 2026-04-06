@@ -93,7 +93,7 @@ class TickMarksWidget(QWidget):
 
 
 class HoldToTalkButton(QPushButton):
-    """Floating push-to-talk button."""
+    """Floating push-to-talk button with animated visuals."""
 
     hold_started = pyqtSignal()
     hold_released = pyqtSignal()
@@ -106,10 +106,16 @@ class HoldToTalkButton(QPushButton):
         self._window_start = None
         self._dragging = False
         self._drag_threshold = 10
+        self._recording = False
+        self._hovered = False
 
-        self.setFixedSize(56, 56)
-        self.setIcon(get_mic_icon(24, "#111111"))
-        self.setIconSize(QSize(24, 24))
+        # Animation state
+        self._pulse_phase = 0.0        # 0..2*pi, drives idle breathing ring
+        self._bar_phase = 0.0          # drives recording sound-wave bars
+        self._glow_opacity = 0.0       # smooth transition glow
+        self._mic_scale = 1.0          # mic icon bounce on press
+
+        self.setFixedSize(64, 64)
         self.setToolTip("Hold to talk")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -121,25 +127,14 @@ class HoldToTalkButton(QPushButton):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
-        self.setProperty("recording", False)
-        self.setStyleSheet(
-            """
-            QPushButton {
-                background-color: rgba(249, 115, 22, 230);
-                border: 2px solid rgba(255, 255, 255, 120);
-                border-radius: 28px;
-            }
-            QPushButton:hover {
-                background-color: rgba(251, 146, 60, 240);
-            }
-            QPushButton[recording="true"] {
-                background-color: rgba(132, 204, 22, 235);
-            }
-            QPushButton[recording="true"]:hover {
-                background-color: rgba(153, 230, 54, 245);
-            }
-        """
-        )
+        self.setStyleSheet("background: transparent; border: none;")
+
+        # 60 fps animation timer
+        self._anim_timer = QTimer()
+        self._anim_timer.timeout.connect(self._tick)
+        self._anim_timer.setInterval(16)  # ~60fps
+        self._anim_timer.start()
+
         self._set_initial_position()
 
         # Periodically re-raise to stay on top of fullscreen/other always-on-top windows
@@ -211,20 +206,94 @@ class HoldToTalkButton(QPushButton):
             self._raise_timer.start()
             self._ensure_on_top()
 
+    def _tick(self) -> None:
+        """Advance animation state each frame — only when recording."""
+        import math
+        if not self._recording:
+            return
+        dt = 0.016
+        self._bar_phase = (self._bar_phase + dt * 6.0) % (2 * math.pi)
+        self.update()
+
+    def enterEvent(self, event) -> None:
+        self._hovered = True
+        if not self._recording:
+            self.hold_started.emit()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self._hovered = False
+        super().leaveEvent(event)
+
+    def paintEvent(self, event) -> None:
+        """Custom-paint the button: flat black + white."""
+        import math
+        from PyQt6.QtGui import QBrush, QColor, QPainter, QPen
+
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        w, h = self.width(), self.height()
+        cx, cy = w / 2, h / 2
+        radius = 26
+
+        # Flat black circle
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(QColor(0, 0, 0)))
+        p.drawEllipse(int(cx - radius), int(cy - radius), radius * 2, radius * 2)
+
+        white = QColor(255, 255, 255)
+
+        if self._recording:
+            # Animated equalizer bars in white
+            bar_w = 3
+            bar_gap = 5
+            num_bars = 5
+            total_w = num_bars * bar_w + (num_bars - 1) * bar_gap
+            start_x = cx - total_w / 2
+            p.setBrush(QBrush(white))
+            for i in range(num_bars):
+                phase_offset = i * 0.9
+                bar_h = 6 + 14 * abs(math.sin(self._bar_phase + phase_offset))
+                bx = start_x + i * (bar_w + bar_gap)
+                by = cy - bar_h / 2
+                p.drawRoundedRect(int(bx), int(by), bar_w, int(bar_h), 1.5, 1.5)
+        else:
+            # White mic icon
+            from PyQt6.QtCore import QRectF
+            pen = QPen(white, 2.0)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            p.setPen(pen)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+
+            p.save()
+            p.translate(cx, cy)
+
+            mic_w, mic_h = 8, 14
+            p.drawRoundedRect(int(-mic_w / 2), int(-mic_h / 2 - 2),
+                              mic_w, mic_h, mic_w / 2, mic_w / 2)
+            arc_rect = QRectF(-10, -10, 20, 20)
+            p.drawArc(arc_rect, 210 * 16, 120 * 16)
+            p.drawLine(0, 10, 0, 14)
+            p.drawLine(-5, 14, 5, 14)
+
+            p.restore()
+
+        p.end()
+
     def set_recording(self, recording: bool) -> None:
         """Update visual state for recording activity."""
-        self.setProperty("recording", recording)
-        self.style().unpolish(self)
-        self.style().polish(self)
+        self._recording = recording
+        if recording:
+            self._mic_scale = 0.7  # bounce effect on press
         self.update()
 
     def mousePressEvent(self, event) -> None:
-        """Start push-to-talk on left mouse press."""
+        """Click to stop recording, or start drag."""
         if event.button() == Qt.MouseButton.LeftButton:
             self._drag_start = event.globalPosition().toPoint()
             self._window_start = self.pos()
             self._dragging = False
-            self.hold_started.emit()
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event) -> None:
@@ -237,11 +306,12 @@ class HoldToTalkButton(QPushButton):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:
-        """Stop push-to-talk on mouse release and save location after drag."""
+        """Click stops recording. Drag saves position."""
         if event.button() == Qt.MouseButton.LeftButton:
-            self.hold_released.emit()
             if self._dragging:
                 self.position_changed.emit(self.x(), self.y())
+            elif self._recording:
+                self.hold_released.emit()
             self._drag_start = None
             self._window_start = None
             self._dragging = False

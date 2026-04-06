@@ -7,8 +7,29 @@ the conflict. Only lightweight, non-Qt imports are allowed in this file.
 """
 
 
+def _add_nvidia_dll_paths() -> None:
+    """Add pip-installed NVIDIA DLL directories to the DLL search path."""
+    import os
+    import sys
+    if sys.platform != "win32":
+        return
+    site_packages = next(
+        (p for p in sys.path if p.endswith("site-packages")), None
+    )
+    if not site_packages:
+        return
+    for sub in ("nvidia/cublas/bin", "nvidia/cudnn/bin", "nvidia/cuda_runtime/bin",
+                "nvidia/nvrtc/bin"):
+        dll_dir = os.path.join(site_packages, sub)
+        if os.path.isdir(dll_dir):
+            os.add_dll_directory(dll_dir)
+            os.environ["PATH"] = dll_dir + os.pathsep + os.environ.get("PATH", "")
+
+
 def main() -> None:
     """Bootstrap entry point: load CUDA model before Qt, then run the app."""
+    _add_nvidia_dll_paths()
+
     # Step 1: load the Whisper model (may use CUDA) before any Qt code
     # is imported. This is the ONLY way to avoid the CUDA+DirectX crash on
     # Windows where importing PyQt6.QtWidgets already initialises GPU state.

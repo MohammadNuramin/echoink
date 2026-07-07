@@ -12,7 +12,7 @@ if sys.platform != "win32":
     import fcntl
 
 from PyQt6.QtCore import QObject, QSize, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QAction
+from PyQt6.QtGui import QAction, QIcon
 from PyQt6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -202,9 +202,39 @@ class HoldToTalkButton(QPushButton):
     def showEvent(self, event) -> None:
         """Start the always-on-top timer when button becomes visible."""
         super().showEvent(event)
+        self._strip_native_border()
         if not self._raise_timer.isActive():
             self._raise_timer.start()
             self._ensure_on_top()
+
+    def _strip_native_border(self) -> None:
+        """Remove the Windows 11 window outline DWM paints around the button.
+
+        The button is a frameless, translucent top-level window, so Windows
+        draws a rounded-rectangle border/backdrop around the window bounds —
+        which appears as a box around the black circle. Tell DWM to draw no
+        border and not round the corners so only the circle is visible.
+        """
+        if sys.platform != "win32":
+            return
+        try:
+            import ctypes
+
+            hwnd = int(self.winId())
+            dwm = ctypes.windll.dwmapi
+
+            # DWMWA_BORDER_COLOR = 34, DWMWA_COLOR_NONE removes the border.
+            border_color = ctypes.c_uint(0xFFFFFFFE)
+            dwm.DwmSetWindowAttribute(
+                hwnd, 34, ctypes.byref(border_color), ctypes.sizeof(border_color)
+            )
+            # DWMWA_WINDOW_CORNER_PREFERENCE = 33, DWMWCP_DONOTROUND = 1.
+            corner_pref = ctypes.c_int(1)
+            dwm.DwmSetWindowAttribute(
+                hwnd, 33, ctypes.byref(corner_pref), ctypes.sizeof(corner_pref)
+            )
+        except Exception:
+            pass
 
     def _tick(self) -> None:
         """Advance animation state each frame — only when recording."""
@@ -338,7 +368,7 @@ class RecordingWindow(QWidget):
     def _setup_ui(self) -> None:
         """Set up the recording window UI."""
         # Set window icon for taskbar (orange = idle)
-        self.setWindowIcon(get_tray_icon(128, recording=False))
+        self.setWindowIcon(EchoInk._get_app_icon())
 
         # Frameless, always on top, floating window that doesn't steal focus
         # Store base flags for toggling focus behavior
@@ -650,7 +680,7 @@ class RecordingWindow(QWidget):
 
     def update_icon(self, recording: bool) -> None:
         """Update window icon based on recording state."""
-        self.setWindowIcon(get_tray_icon(128, recording=recording))
+        self.setWindowIcon(EchoInk._get_app_icon())
 
     def keyPressEvent(self, event) -> None:
         """Handle key presses - ESC cancels recording."""
@@ -1035,10 +1065,16 @@ class EchoInk:
     """Main application class."""
 
     def __init__(self):
+        # Set AppUserModelID so Windows taskbar shows the correct icon
+        if sys.platform == "win32":
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("echoink.app")
+
         self.config = Config.load()
         self.app = QApplication(sys.argv)
+        self.app.setApplicationName("EchoInk")
         self.app.setQuitOnLastWindowClosed(False)
-        self.app.setWindowIcon(get_tray_icon(128, recording=False))  # Orange when idle
+        self.app.setWindowIcon(self._get_app_icon())
 
         # Components
         self.recorder = AudioRecorder(self.config)
@@ -1097,12 +1133,19 @@ class EchoInk:
             if not self.integration_server.start():
                 self.integration_server = None
 
+    @staticmethod
+    def _get_app_icon() -> QIcon:
+        """Load the app icon from assets/echoink.ico."""
+        from pathlib import Path
+        ico_path = Path(__file__).parent.parent.parent / "assets" / "echoink.ico"
+        if ico_path.exists():
+            return QIcon(str(ico_path))
+        return get_tray_icon(64, recording=False)
+
     def _setup_tray(self) -> None:
         """Set up system tray icon."""
         self.tray = QSystemTrayIcon(self.app)
-
-        # Create simple icon (will use default if no icon available)
-        self.tray.setIcon(get_tray_icon(64, recording=False))  # Orange when idle
+        self.tray.setIcon(self._get_app_icon())
         hotkey_str = "+".join(k.capitalize() for k in self.config.hotkey)
         self.tray.setToolTip(f"EchoInk - Press {hotkey_str} to dictate")
 
@@ -1156,7 +1199,7 @@ class EchoInk:
 
     def _update_icons(self, recording: bool) -> None:
         """Update all icons based on recording state."""
-        self.tray.setIcon(get_tray_icon(64, recording=recording))
+        self.tray.setIcon(EchoInk._get_app_icon())
         self.window.update_icon(recording=recording)
         self.hold_to_talk_button.set_recording(recording=recording)
 

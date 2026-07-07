@@ -1,4 +1,9 @@
-"""Whisper transcription using faster-whisper library (in-process, no server needed)."""
+"""Speech-to-text using NVIDIA Parakeet-TDT-0.6B-v2 via onnx-asr (in-process, no server).
+
+English-only, but state-of-the-art accuracy (~6% WER) with automatic punctuation
+and capitalization, and sub-second latency even on CPU. Runs through ONNX Runtime,
+so no PyTorch / NeMo dependency is required.
+"""
 
 import tempfile
 import threading
@@ -6,7 +11,9 @@ from pathlib import Path
 
 from .config import Config
 
-MODEL_NAME = "Systran/faster-whisper-medium.en"
+# onnx-asr model id for the pre-converted Parakeet checkpoint
+# (istupakov/parakeet-tdt-0.6b-v2-onnx on Hugging Face).
+MODEL_NAME = "nemo-parakeet-tdt-0.6b-v2"
 
 _model = None
 _model_lock = threading.Lock()
@@ -19,47 +26,31 @@ class WhisperAPIError(Exception):
 
 
 def _load_model():
-    """Load the Whisper model. Downloads on first run (~1.5GB)."""
-    import struct
-    import wave as _wave
-    import tempfile
-    from faster_whisper import WhisperModel
+    """Load the Parakeet model. Downloads the ONNX weights on first run (~2.4GB)."""
+    import onnx_asr
+    import onnxruntime as ort
 
-    def _make_silent_wav() -> str:
-        """Create a tiny silent WAV for testing transcription."""
-        path = tempfile.mktemp(suffix=".wav")
-        with _wave.open(path, "wb") as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(2)
-            wf.setframerate(16000)
-            wf.writeframes(struct.pack("<" + "h" * 1600, *([0] * 1600)))
-        return path
+    # Prefer the GPU if an onnxruntime CUDA provider is available; otherwise
+    # fall back to CPU (Parakeet is still sub-second on CPU for dictation clips).
+    available = ort.get_available_providers()
+    if "CUDAExecutionProvider" in available:
+        providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+        device = "GPU"
+    else:
+        providers = ["CPUExecutionProvider"]
+        device = "CPU"
 
-    # Try GPU first, fall back to CPU automatically
-    for device, compute in [("cuda", "int8_float16"), ("cuda", "float16"), ("cpu", "int8")]:
-        try:
-            model = WhisperModel(MODEL_NAME, device=device, compute_type=compute)
-            # Verify inference actually works (cuBLAS/cuDNN may be missing even
-            # if model weights load onto GPU without error)
-            test_wav = _make_silent_wav()
-            try:
-                list(model.transcribe(test_wav)[0])
-            finally:
-                try:
-                    Path(test_wav).unlink()
-                except Exception:
-                    pass
-            print(f"Whisper loaded: {MODEL_NAME} on {device.upper()}")
-            return model
-        except Exception as e:
-            if device == "cuda":
-                print(f"GPU inference unavailable, falling back to CPU: {e}")
-            else:
-                raise RuntimeError(f"Failed to load Whisper model: {e}") from e
+    try:
+        model = onnx_asr.load_model(MODEL_NAME, providers=providers)
+    except Exception as e:
+        raise RuntimeError(f"Failed to load Parakeet model: {e}") from e
+
+    print(f"Parakeet loaded: {MODEL_NAME} on {device}")
+    return model
 
 
 def get_model():
-    """Get or load the Whisper model (thread-safe, blocks until ready)."""
+    """Get or load the ASR model (thread-safe, blocks until ready)."""
     global _model, _model_error
     if _model is not None:
         return _model
@@ -82,17 +73,23 @@ def preload_model():
             get_model()
         except Exception as e:
             print(f"Model preload failed: {e}")
-    threading.Thread(target=_preload, daemon=True, name="whisper-preload").start()
+    threading.Thread(target=_preload, daemon=True, name="asr-preload").start()
 
 
 class WhisperClient:
-    """Transcription client using faster-whisper running in-process."""
+    """Transcription client using Parakeet (onnx-asr) running in-process.
+
+    Name kept for backwards compatibility with the rest of the app.
+    """
 
     def __init__(self, config: Config):
         self.config = config
 
     def transcribe_sync(self, audio_data: bytes) -> str:
-        """Transcribe audio bytes. Blocks until model is ready and transcription is done."""
+        """Transcribe audio bytes. Blocks until model is ready and transcription is done.
+
+        Note: Parakeet-TDT-0.6B-v2 is English-only, so ``config.language`` is ignored.
+        """
         if not audio_data or len(audio_data) < 1000:
             return ""
 
@@ -103,15 +100,8 @@ class WhisperClient:
             tmp_path = f.name
 
         try:
-            segments, _info = model.transcribe(
-                tmp_path,
-                language="en",
-                beam_size=1,
-                vad_filter=True,
-                vad_parameters={"min_silence_duration_ms": 300},
-            )
-            text = " ".join(seg.text.strip() for seg in segments)
-            return text.strip()
+            text = model.recognize(tmp_path)
+            return (text or "").strip()
         except Exception as e:
             raise WhisperAPIError(f"Transcription failed: {e}") from e
         finally:

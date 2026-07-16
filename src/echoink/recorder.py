@@ -100,6 +100,47 @@ class AudioRecorder:
                 pass
         return devices
 
+    def _resolve_input_device(self) -> int | None:
+        """Return the PyAudio index of the configured input device.
+
+        Device indices are not stable across sessions — plugging in or removing
+        an audio device renumbers them, which would silently record from the
+        wrong microphone. So the saved index is verified against the saved
+        device name and re-resolved by name if it has moved.
+
+        Returns None (system default) when nothing is configured or the saved
+        device is gone. PipeWire source ids (str) are left to the default.
+        """
+        index = self.config.input_device_index
+        name = self.config.input_device_name
+
+        if not isinstance(index, int):
+            return None
+
+        # Fast path: the saved index still refers to the saved device.
+        try:
+            info = self.audio.get_device_info_by_index(index)
+            if info["maxInputChannels"] > 0 and (not name or info["name"] == name):
+                return index
+        except Exception:
+            pass
+
+        # The index moved (or is stale) — locate the device by name instead.
+        if name:
+            for i in range(self.audio.get_device_count()):
+                try:
+                    info = self.audio.get_device_info_by_index(i)
+                except Exception:
+                    continue
+                if info["name"] == name and info["maxInputChannels"] > 0:
+                    print(f"Input device '{name}' moved: index {index} -> {i}")
+                    self.config.input_device_index = i
+                    self.config.save()
+                    return i
+            print(f"Configured input device '{name}' not found; using system default")
+
+        return None
+
     def start(self, level_callback=None) -> None:
         """Start recording audio."""
         if self.is_recording:
@@ -109,13 +150,15 @@ class AudioRecorder:
         self.frames = []
         self.is_recording = True
 
-        # Use simple defaults - let PyAudio/PipeWire handle device routing
+        device_index = self._resolve_input_device()
+
         try:
             self.stream = self.audio.open(
                 format=pyaudio.paInt16,
                 channels=self.config.channels,
                 rate=self.config.sample_rate,
                 input=True,
+                input_device_index=device_index,
                 frames_per_buffer=self.config.chunk_size,
             )
         except Exception as e:

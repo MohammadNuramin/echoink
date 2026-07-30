@@ -54,6 +54,7 @@ class Config:
     auto_paste: bool = True
     copy_to_clipboard: bool = True
     language: str = "en"
+    compute_device: str = "gpu"  # "gpu" (CUDA, default) or "cpu"; GPU falls back to CPU if unavailable
     typing_delay_ms: int = 5  # Milliseconds between keystrokes (increase if terminal freezes)
     max_auto_type_chars: int = 500  # Safety cap: skip auto-typing very long transcriptions
     max_recording_seconds: int = 45  # Safety cap: auto-stop recording if stop signal is missed

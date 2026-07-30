@@ -19,7 +19,7 @@ def _add_nvidia_dll_paths() -> None:
     if not site_packages:
         return
     for sub in ("nvidia/cublas/bin", "nvidia/cudnn/bin", "nvidia/cuda_runtime/bin",
-                "nvidia/nvrtc/bin"):
+                "nvidia/cuda_nvrtc/bin", "nvidia/cufft/bin", "nvidia/nvjitlink/bin"):
         dll_dir = os.path.join(site_packages, sub)
         if os.path.isdir(dll_dir):
             os.add_dll_directory(dll_dir)
@@ -33,7 +33,12 @@ def main() -> None:
     # Step 1: load the Whisper model (may use CUDA) before any Qt code
     # is imported. This is the ONLY way to avoid the CUDA+DirectX crash on
     # Windows where importing PyQt6.QtWidgets already initialises GPU state.
-    from echoink.api import get_model  # noqa: PLC0415
+    from echoink.api import get_model, set_device  # noqa: PLC0415
+    from echoink.config import Config  # noqa: PLC0415
+    try:
+        set_device(Config.load().compute_device)  # GPU by default, CPU if configured
+    except Exception:
+        pass
     try:
         get_model()
     except Exception:

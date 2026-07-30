@@ -546,6 +546,17 @@ class RecordingWindow(QWidget):
         settings_layout.addWidget(mic_label)
         settings_layout.addWidget(self.mic_combo)
 
+        # Compute device selection (GPU is much faster; falls back to CPU)
+        device_label = QLabel("Processing")
+        self.device_combo = QComboBox()
+        self.device_combo.setStyleSheet(self.mic_combo.styleSheet())
+        self.device_combo.addItem("GPU (fastest, recommended)", "gpu")
+        self.device_combo.addItem("CPU (slower, no GPU needed)", "cpu")
+        want = "cpu" if getattr(self.config, "compute_device", "gpu") == "cpu" else "gpu"
+        self.device_combo.setCurrentIndex(1 if want == "cpu" else 0)
+        settings_layout.addWidget(device_label)
+        settings_layout.addWidget(self.device_combo)
+
         # Gain slider with dynamic level display in groove
         # 0-200% range, with 100% (1.0x) in the middle
         gain_row = QHBoxLayout()
@@ -858,6 +869,19 @@ class RecordingWindow(QWidget):
         """Save settings to config."""
         self.config.input_device_index = self.mic_combo.currentData()
         self.config.input_device_name = self.mic_combo.currentText()
+
+        # Compute device (GPU/CPU). If it changed, tell the ASR layer to reload
+        # the model on the new backend so the switch takes effect immediately.
+        new_device = self.device_combo.currentData()
+        if new_device != getattr(self.config, "compute_device", "gpu"):
+            self.config.compute_device = new_device
+            try:
+                from . import api
+                api.set_device(new_device)
+                api.preload_model()  # reload in background on the new device
+            except Exception as e:
+                print(f"Could not switch compute device: {e}")
+
         self.config.save()
         # Brief confirmation
         self.save_btn.setText("✓ Saved!")

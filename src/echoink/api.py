@@ -18,6 +18,8 @@ MODEL_NAME = "nemo-parakeet-tdt-0.6b-v2"
 _model = None
 _model_lock = threading.Lock()
 _model_error: str | None = None
+_model_device: str | None = None  # actual backend the loaded model runs on: "GPU" or "CPU"
+_requested_device: str = "gpu"  # what the user asked for; set from config before loading
 
 
 class WhisperAPIError(Exception):
@@ -25,28 +27,77 @@ class WhisperAPIError(Exception):
     pass
 
 
-def _load_model():
-    """Load the Parakeet model. Downloads the ONNX weights on first run (~2.4GB)."""
+def _load_model(prefer: str = "gpu"):
+    """Load the Parakeet model. Downloads the ONNX weights on first run (~2.4GB).
+
+    ``prefer`` is "gpu" or "cpu". "gpu" uses CUDA when available and transparently
+    falls back to CPU otherwise; "cpu" forces CPU regardless of hardware.
+    """
+    global _model_device
     import onnx_asr
     import onnxruntime as ort
 
-    # Prefer the GPU if an onnxruntime CUDA provider is available; otherwise
-    # fall back to CPU (Parakeet is still sub-second on CPU for dictation clips).
+    # Make onnxruntime find the CUDA / cuDNN shared libraries shipped as
+    # nvidia-* pip wheels (no system CUDA Toolkit install required).
+    if prefer != "cpu":
+        try:
+            ort.preload_dlls()  # available on onnxruntime-gpu >= 1.21
+        except Exception:
+            pass
+
     available = ort.get_available_providers()
-    if "CUDAExecutionProvider" in available:
+    if prefer != "cpu" and "CUDAExecutionProvider" in available:
         providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
         device = "GPU"
     else:
         providers = ["CPUExecutionProvider"]
         device = "CPU"
+        if prefer != "cpu":
+            print("GPU requested but CUDAExecutionProvider unavailable — using CPU.")
 
     try:
         model = onnx_asr.load_model(MODEL_NAME, providers=providers)
     except Exception as e:
-        raise RuntimeError(f"Failed to load Parakeet model: {e}") from e
+        # A CUDA session can fail to initialise even when the provider lists it
+        # (missing/mismatched driver, cuDNN, etc.) — retry once on pure CPU.
+        if device == "GPU":
+            print(f"GPU model load failed ({e}); falling back to CPU.")
+            try:
+                model = onnx_asr.load_model(MODEL_NAME, providers=["CPUExecutionProvider"])
+                device = "CPU"
+            except Exception as e2:
+                raise RuntimeError(f"Failed to load Parakeet model: {e2}") from e2
+        else:
+            raise RuntimeError(f"Failed to load Parakeet model: {e}") from e
 
+    _model_device = device
     print(f"Parakeet loaded: {MODEL_NAME} on {device}")
     return model
+
+
+def set_device(device: str) -> None:
+    """Set the preferred compute device ("gpu" or "cpu").
+
+    If the model is already loaded on a different backend, it is unloaded so the
+    next transcription reloads it on the newly requested device.
+    """
+    global _requested_device, _model, _model_error, _model_device
+    device = (device or "gpu").lower()
+    if device not in ("gpu", "cpu"):
+        device = "gpu"
+    with _model_lock:
+        _requested_device = device
+        # Force a reload if the loaded backend no longer matches the request.
+        want = "CPU" if device == "cpu" else "GPU"
+        if _model is not None and _model_device is not None and _model_device != want:
+            _model = None
+            _model_device = None
+        _model_error = None
+
+
+def get_device() -> str | None:
+    """Return the backend the model is actually running on ("GPU"/"CPU"), or None."""
+    return _model_device
 
 
 def get_model():
@@ -59,7 +110,7 @@ def get_model():
     with _model_lock:
         if _model is None and not _model_error:
             try:
-                _model = _load_model()
+                _model = _load_model(_requested_device)
             except Exception as e:
                 _model_error = str(e)
                 raise WhisperAPIError(_model_error) from e

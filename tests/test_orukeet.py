@@ -27,7 +27,8 @@ class TranscriptionTests(unittest.TestCase):
         stream.result = SimpleNamespace(text="  Hello world.  ")
         samples = np.tile(np.array([16384, 0], dtype="<i2"), 1000)
         with patch.object(api, "get_model", return_value=model):
-            text = api.WhisperClient(Config()).transcribe_sync(wav_bytes(samples.tobytes(), 2))
+            client = api.WhisperClient(Config(language_mode="en"))
+            text = client.transcribe_sync(wav_bytes(samples.tobytes(), 2))
         self.assertEqual(text, "Hello world.")
         rate, audio = stream.accept_waveform.call_args.args
         self.assertEqual(rate, 16000)

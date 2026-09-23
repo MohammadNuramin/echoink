@@ -21,6 +21,7 @@
 - **Animated waveform** — see your audio levels in real time
 - **Built-in Orukeet model** — runs fully offline, no internet after first download
 - **Local CPU inference** - Orukeet INT8 through sherpa-onnx
+- **English + Bangla** — each recording is routed to the right model automatically; Bangla runs on the GPU (see [Bangla](#bangla))
 - **Auto-type** — transcribed text typed directly into whatever window has focus
 - **Clipboard copy** — text also copied to clipboard
 - **System tray** — runs quietly in background
@@ -41,6 +42,8 @@ echoink
 ```
 
 An orange floating button appears at the bottom-right of your screen. The first launch downloads the Orukeet model (~487 MB download, ~672 MB extracted).
+
+For Bangla, install with `pip install -e ".[gpu]"` (NVIDIA GPU) or `pip install -e ".[cpu]"` instead, then follow [Bangla](#bangla).
 
 ### Linux (Ubuntu/Debian)
 
@@ -114,10 +117,62 @@ EOF
 
 **macOS** — System Preferences → Users & Groups → Login Items.
 
+## Bangla
+
+EchoInk can take dictation in Bangla as well as English and switches between them on its own:
+speak English and you get English, speak Bangla and you get Bangla script.
+
+For each recording, Whisper small's language-ID step compares how Bangla-like and how
+English-like the audio is. If Bangla wins by more than `bangla_margin`, the recording goes to
+the [speaklar Bangla FastConformer](https://huggingface.co/speaklar/speaklar_stt_bn_fastconformer);
+otherwise it goes to Orukeet. Orukeet starts on the CPU at the same moment the GPU checks the
+language, so the check adds no delay to English.
+
+### Setup
+
+1. Install ONNX Runtime for the GPU: `pip install -e ".[gpu]"` (CUDA 12 and cuDNN 9 come as
+   pip wheels; no CUDA Toolkit needed). Without an NVIDIA GPU use `pip install -e ".[cpu]"`.
+2. Convert the Bangla model to ONNX once. It is only published as a NeMo checkpoint, and
+   [scripts/export_bangla_model.py](scripts/export_bangla_model.py) converts it in a throwaway
+   Docker container, so EchoInk itself needs no PyTorch or NeMo. From the repository root:
+
+   ```powershell
+   # Windows (PowerShell)
+   docker run --rm -v "$env:APPDATA\echoink\models:/models" -v "${PWD}\scripts:/scripts:ro" python:3.11 bash -c "pip install torch==2.7.1 --index-url https://download.pytorch.org/whl/cpu && pip install 'nemo_toolkit[asr]==3.0.0' torch==2.7.1 onnxruntime && python /scripts/export_bangla_model.py --out /models/speaklar-bn-fastconformer-onnx"
+   ```
+
+   ```bash
+   # Linux / macOS
+   docker run --rm -v "$HOME/.config/echoink/models:/models" -v "$PWD/scripts:/scripts:ro" python:3.11 bash -c "pip install torch==2.7.1 --index-url https://download.pytorch.org/whl/cpu && pip install 'nemo_toolkit[asr]==3.0.0' torch==2.7.1 onnxruntime && python /scripts/export_bangla_model.py --out /models/speaklar-bn-fastconformer-onnx"
+   ```
+
+3. Restart EchoInk. The first start downloads the Whisper small language-ID model
+   (~485 MB on GPU, ~250 MB on CPU).
+
+The settings panel has a **Language** choice (Auto: English + Bangla, English, Bangla) and a
+**Processing** choice (GPU or CPU for Bangla). Without the converted model, Auto simply means English.
+
+### Speed and accuracy
+
+On an RTX 4090, Bangla text is ready about 0.05 s after you stop speaking in Bangla mode and
+about 0.17 s in Auto mode (language check included). English is unchanged, since Orukeet runs on
+the CPU either way. In testing, the language check picked the right model for all 141
+full-length Bangla clips and 98% of 214 English ones (including South Asian accents); very
+short phrases (about 1.5 s) are less reliable. Raise `bangla_margin` if English is taken for
+Bangla, lower it if Bangla is taken for English.
+
+The speaklar model was trained on audiobook data. It transcribes its own sample clip perfectly,
+but on real recordings it makes many mistakes (about 40–50% character error rate on
+Bangladeshi news and YouTube clips), so expect to correct its output.
+
+On Windows, Bangla text is typed with Unicode keyboard input. On Linux and macOS it is copied
+to the clipboard instead, because the key-press backends there only handle ASCII.
+
 ## Processing
 
-Orukeet uses its 8-bit ONNX release on CPU. CUDA is not required.
-The Processing setting shows the active backend; legacy GPU preferences also use CPU.
+Orukeet uses its 8-bit ONNX release on CPU. CUDA is not required for English.
+Bangla and language detection use ONNX Runtime on the GPU (CUDA) when the `gpu` extra is
+installed, and fall back to CPU otherwise. The Processing setting chooses between the two.
 
 ## Configuration
 
@@ -126,7 +181,10 @@ Config file: `%APPDATA%\echoink\config.json` (Windows) or `~/.config/echoink/con
 | Key | Default | Description |
 |-----|---------|-------------|
 | `hotkey` | `["ctrl","alt","w"]` | Global recording hotkey |
-| `language` | `"en"` | Legacy setting; Orukeet detects language automatically |
+| `language_mode` | `"auto"` | `"auto"` (English or Bangla per recording), `"en"` or `"bn"` |
+| `bangla_margin` | `1.0` | How far Bangla must out-score English before Auto picks Bangla |
+| `compute_device` | `"gpu"` | Where Bangla and language detection run: `"gpu"` or `"cpu"` |
+| `language` | `"en"` | Legacy setting; replaced by `language_mode` |
 | `auto_paste` | `true` | Type text into focused window |
 | `copy_to_clipboard` | `true` | Also copy to clipboard |
 | `waveform_color` | `"#84cc16"` | Waveform color (hex) |
@@ -163,3 +221,11 @@ The download requires about 487 MB; keep additional space for extraction and the
 
 Model weights are licensed under CC BY-SA 4.0, separately from EchoInk's MIT code.
 The archive's `LICENSE-WEIGHTS` and `NOTICE.md` are retained alongside the model.
+
+The optional Bangla model, [speaklar/speaklar_stt_bn_fastconformer](https://huggingface.co/speaklar/speaklar_stt_bn_fastconformer)
+by Munzur ul Mamun, is licensed **CC BY-NC 4.0 (non-commercial use only)**. EchoInk does
+not ship it; the export script downloads revision `8773966e4a0b6389be318e42ebc84b957c71067e`
+and writes a `NOTICE.md` next to the converted model. Language detection uses
+[Whisper small](https://huggingface.co/openai/whisper-small) (Apache 2.0) in the ONNX
+conversion from `onnx-community/whisper-small`, pinned to revision
+`36050c46d777d46dc4b5f43f6d90574fc38f8732`.

@@ -2,8 +2,9 @@
 
 This file exists to solve a Windows-specific incompatibility:
 importing PyQt6 loads GPU/DirectX DLLs that conflict with CUDA initialization.
-By loading the Whisper/CUDA model HERE (before main.py is imported), we avoid
-the conflict. Only lightweight, non-Qt imports are allowed in this file.
+By loading the speech models (the Bangla ones use CUDA) HERE, before main.py is
+imported, we avoid the conflict. Only lightweight, non-Qt imports are allowed in
+this file.
 """
 
 
@@ -30,17 +31,15 @@ def main() -> None:
     """Bootstrap entry point: load CUDA model before Qt, then run the app."""
     _add_nvidia_dll_paths()
 
-    # Step 1: load the Whisper model (may use CUDA) before any Qt code
+    # Step 1: load the speech models (Bangla uses CUDA) before any Qt code
     # is imported. This is the ONLY way to avoid the CUDA+DirectX crash on
     # Windows where importing PyQt6.QtWidgets already initialises GPU state.
-    from echoink.api import get_model, set_device  # noqa: PLC0415
+    from echoink.api import load_models, set_device  # noqa: PLC0415
     from echoink.config import Config  # noqa: PLC0415
     try:
-        set_device(Config.load().compute_device)  # GPU by default, CPU if configured
-    except Exception:
-        pass
-    try:
-        get_model()
+        config = Config.load()
+        set_device(config.compute_device)  # GPU by default, CPU if configured
+        load_models(config.language_mode)
     except Exception:
         pass  # Non-fatal; retry happens on first recording
 

@@ -1,4 +1,7 @@
-"""Auto-type functionality - cross-platform using PyAutoGUI and evdev."""
+"""Auto-type functionality - cross-platform using PyAutoGUI and evdev.
+
+Non-ASCII text (e.g. Bangla) is typed with SendInput Unicode events on Windows.
+"""
 
 import platform
 import shutil
@@ -164,10 +167,81 @@ class Typer:
         if not text:
             return False
 
+        # PyAutoGUI and the evdev key map only know ASCII keys and silently drop
+        # anything else, such as Bangla script.
+        if not text.isascii():
+            if self.system == "Windows":
+                return self._type_unicode_windows(text, stop_event=stop_event)
+            print("Text is not ASCII and cannot be typed here; paste it from the clipboard")
+            return self.copy_to_clipboard(text)
+
         if self.system == "Windows" or self.system == "Darwin":
             return self._type_pyautogui(text, stop_event=stop_event)
         else:
             return self._type_linux(text, stop_event=stop_event)
+
+    def _type_unicode_windows(self, text: str, stop_event: threading.Event | None = None) -> bool:
+        """Type any Unicode text on Windows with SendInput's KEYEVENTF_UNICODE events."""
+        import ctypes
+        import time
+        from ctypes import wintypes
+
+        class KEYBDINPUT(ctypes.Structure):
+            _fields_ = [
+                ("wVk", wintypes.WORD),
+                ("wScan", wintypes.WORD),
+                ("dwFlags", wintypes.DWORD),
+                ("time", wintypes.DWORD),
+                ("dwExtraInfo", ctypes.c_size_t),
+            ]
+
+        class MOUSEINPUT(ctypes.Structure):  # largest union member; sets sizeof(INPUT)
+            _fields_ = [
+                ("dx", wintypes.LONG),
+                ("dy", wintypes.LONG),
+                ("mouseData", wintypes.DWORD),
+                ("dwFlags", wintypes.DWORD),
+                ("time", wintypes.DWORD),
+                ("dwExtraInfo", ctypes.c_size_t),
+            ]
+
+        class INPUTUNION(ctypes.Union):
+            _fields_ = [("ki", KEYBDINPUT), ("mi", MOUSEINPUT)]
+
+        class INPUT(ctypes.Structure):
+            _fields_ = [("type", wintypes.DWORD), ("u", INPUTUNION)]
+
+        input_keyboard, keyeventf_keyup, keyeventf_unicode = 1, 0x0002, 0x0004
+        send_input = ctypes.windll.user32.SendInput
+        send_input.argtypes = [wintypes.UINT, ctypes.POINTER(INPUT), ctypes.c_int]
+        send_input.restype = wintypes.UINT
+
+        # One key-down/key-up pair per UTF-16 code unit.
+        data = text.encode("utf-16-le")
+        units = [int.from_bytes(data[i : i + 2], "little") for i in range(0, len(data), 2)]
+
+        # Small delay to let focus settle
+        time.sleep(0.1)
+
+        chunk_size = 12
+        for i in range(0, len(units), chunk_size):
+            if stop_event and stop_event.is_set():
+                return False
+            chunk = units[i : i + chunk_size]
+            events = (INPUT * (2 * len(chunk)))()
+            for j, unit in enumerate(chunk):
+                for k, flags in enumerate((keyeventf_unicode, keyeventf_unicode | keyeventf_keyup)):
+                    event = events[2 * j + k]
+                    event.type = input_keyboard
+                    event.u.ki.wScan = unit
+                    event.u.ki.dwFlags = flags
+            if send_input(len(events), events, ctypes.sizeof(INPUT)) != len(events):
+                # Blocked, e.g. by UIPI when the focused window runs elevated.
+                print("Unicode typing was blocked; text left on the clipboard")
+                return self.copy_to_clipboard(text)
+            if self._typing_delay > 0:
+                time.sleep(self._typing_delay * len(chunk))
+        return True
 
     def _type_pyautogui(self, text: str, stop_event: threading.Event | None = None) -> bool:
         """Type text using PyAutoGUI (Windows/macOS)."""

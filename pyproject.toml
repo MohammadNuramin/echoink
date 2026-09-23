@@ -8,7 +8,7 @@ license = { text = "MIT" }
 authors = [
     { name = "MohammadNuramin" }
 ]
-keywords = ["voice", "dictation", "whisper", "speech-to-text", "linux", "windows", "macos"]
+keywords = ["voice", "dictation", "whisper", "speech-to-text", "bangla", "linux", "windows", "macos"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: X11 Applications :: Qt",
@@ -28,6 +28,7 @@ dependencies = [
     "pyaudio>=0.2.13",
     "numpy>=1.24.0",
     "sherpa-onnx==1.13.8",
+    "onnx-asr>=0.11.0,<0.12",
     "huggingface-hub>=0.27.0",
     "filelock>=3.0",
     "pynput>=1.7.6",
@@ -36,8 +37,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Legacy GPU dependencies retained for existing installation commands.
-# Orukeet INT8 uses sherpa-onnx on CPU and does not need this extra.
+# Bangla speech and English/Bangla detection run through ONNX Runtime; install ONE of:
+#   pip install -e ".[gpu]"   NVIDIA GPU (CUDA 12 / cuDNN 9 wheels, no CUDA Toolkit needed)
+#   pip install -e ".[cpu]"   CPU only
+# Orukeet (English) uses sherpa-onnx on the CPU and needs neither.
 gpu = [
     "onnxruntime-gpu>=1.20.0",
     "nvidia-cudnn-cu12>=9,<10",
@@ -45,6 +48,9 @@ gpu = [
     "nvidia-cufft-cu12",
     "nvidia-cuda-runtime-cu12",
     "nvidia-cuda-nvrtc-cu12",
+]
+cpu = [
+    "onnxruntime>=1.20.0",
 ]
 windows = [
     "pyperclip>=1.8.0",
@@ -77,6 +83,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/echoink"]
+
+[tool.uv]
+# onnxruntime and onnxruntime-gpu provide the same module; only one can be installed.
+conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]
 
 [tool.black]
 line-length = 100

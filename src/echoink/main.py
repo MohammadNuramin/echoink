@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from . import bangla
 from .api import WhisperAPIError, WhisperClient
 from .config import Config
 from .hotkey import create_hotkey_manager
@@ -546,15 +547,34 @@ class RecordingWindow(QWidget):
         settings_layout.addWidget(mic_label)
         settings_layout.addWidget(self.mic_combo)
 
-        # Orukeet INT8 currently runs on CPU; retain legacy stored preference values.
+        # Language: auto switches between English and Bangla per recording.
+        installed = bangla.is_installed()
+        language_label = QLabel(
+            "Language" if installed else "Language (Bangla model not installed)"
+        )
+        self.language_combo = QComboBox()
+        self.language_combo.setStyleSheet(self.mic_combo.styleSheet())
+        self.language_combo.addItem("Auto: English + Bangla", "auto")
+        self.language_combo.addItem("English", "en")
+        self.language_combo.addItem("Bangla", "bn")
+        index = self.language_combo.findData(self.config.language_mode)
+        self.language_combo.setCurrentIndex(max(0, index))
+        if not installed:
+            self.language_combo.setToolTip(
+                "Convert the Bangla model with scripts/export_bangla_model.py (see README)."
+            )
+        settings_layout.addWidget(language_label)
+        settings_layout.addWidget(self.language_combo)
+
+        # Orukeet (English) always runs on the CPU; this picks where Bangla and
+        # language detection run.
         device_label = QLabel("Processing")
         self.device_combo = QComboBox()
         self.device_combo.setStyleSheet(self.mic_combo.styleSheet())
-        self.device_combo.addItem("Orukeet INT8 (CPU)", "gpu")
-        self.device_combo.addItem("Orukeet INT8 (CPU)", "cpu")
+        self.device_combo.addItem("GPU for Bangla (fastest)", "gpu")
+        self.device_combo.addItem("CPU only (slower)", "cpu")
         want = "cpu" if getattr(self.config, "compute_device", "gpu") == "cpu" else "gpu"
         self.device_combo.setCurrentIndex(1 if want == "cpu" else 0)
-        self.device_combo.setEnabled(False)
         settings_layout.addWidget(device_label)
         settings_layout.addWidget(self.device_combo)
 
@@ -746,7 +766,7 @@ class RecordingWindow(QWidget):
             self.settings_panel.show()
             self.settings_btn.setIcon(get_chevron_up_icon(20, "#84cc16"))
             # Expand window - make it tall enough for all settings + taller history
-            self.setFixedSize(self.config.window_width, self.config.window_height + 520)
+            self.setFixedSize(self.config.window_width, self.config.window_height + 570)
             # Refresh integration status and start auto-update timer
             self._update_integration_status()
             self._integration_timer.start()
@@ -871,17 +891,21 @@ class RecordingWindow(QWidget):
         self.config.input_device_index = self.mic_combo.currentData()
         self.config.input_device_name = self.mic_combo.currentText()
 
-        # Compute device (GPU/CPU). If it changed, tell the ASR layer to reload
-        # the model on the new backend so the switch takes effect immediately.
+        # Language and compute device (GPU/CPU). If either changed, load the models
+        # the new setting needs in the background so the switch takes effect immediately.
+        new_language = self.language_combo.currentData()
         new_device = self.device_combo.currentData()
-        if new_device != getattr(self.config, "compute_device", "gpu"):
-            self.config.compute_device = new_device
+        language_changed = new_language != self.config.language_mode
+        device_changed = new_device != getattr(self.config, "compute_device", "gpu")
+        self.config.language_mode = new_language
+        self.config.compute_device = new_device
+        if language_changed or device_changed:
             try:
                 from . import api
                 api.set_device(new_device)
-                api.preload_model()  # reload in background on the new device
+                api.preload_model(new_language)
             except Exception as e:
-                print(f"Could not switch compute device: {e}")
+                print(f"Could not switch speech models: {e}")
 
         self.config.save()
         # Brief confirmation
@@ -1309,7 +1333,7 @@ class EchoInk:
             self._start_recording()
 
     def _reload_engine(self) -> None:
-        """Rebuild audio capture and the ASR model without restarting the app.
+        """Rebuild audio capture and the speech models without restarting the app.
 
         Recovers from a stale PortAudio handle or CUDA/session state after the
         machine sleeps/wakes or the USB mic power-cycles — the usual cause of
@@ -1328,7 +1352,7 @@ class EchoInk:
 
         from . import api
         api.reset_model()
-        api.preload_model()
+        api.preload_model(self.config.language_mode)
 
         self.tray.showMessage(
             "EchoInk",

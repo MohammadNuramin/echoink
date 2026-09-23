@@ -30,30 +30,38 @@ import kotlin.math.hypot
  * Shows the floating mic over other apps. Tap it to record, tap again to send the
  * recording to the PC; the text is typed into the focused field by TextInsertService.
  *
+ * Recordings the PC can't receive (EchoInk closed, PC asleep, no network) are kept on
+ * the phone and sent once the PC answers again; their text goes to the clipboard.
+ *
  * It runs as a microphone foreground service started from the app's screen, which is
  * what lets it record while other apps are in front.
  */
 class FloatingMicService : Service() {
     private lateinit var settings: Settings
+    private lateinit var pending: PendingRecordings
     private lateinit var windowManager: WindowManager
     private lateinit var params: WindowManager.LayoutParams
     private var button: MicButton? = null
     private var closeTarget: CloseTarget? = null
+    private var sendingPending = false
     private val recorder = AudioRecorder()
     private val network = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
     private val autoStop = Runnable { if (recorder.isRecording) finishRecording() }
+    private val recheck = Runnable { checkPc(warnIfOffline = false) }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         settings = Settings(this)
+        pending = PendingRecordings(this)
         windowManager = getSystemService(WindowManager::class.java)
         try {
             startInForeground()
             showButton()
             running = true
+            checkPc(warnIfOffline = false)
         } catch (e: Exception) {
             toast("Floating mic could not start: ${e.message}")
             stopSelf()
@@ -68,6 +76,7 @@ class FloatingMicService : Service() {
     override fun onDestroy() {
         running = false
         main.removeCallbacks(autoStop)
+        main.removeCallbacks(recheck)
         if (recorder.isRecording) recorder.stop()
         hideCloseTarget()
         button?.let { windowManager.removeView(it) }
@@ -81,6 +90,9 @@ class FloatingMicService : Service() {
         manager.createNotificationChannel(
             NotificationChannel(CHANNEL, "Floating mic", NotificationManager.IMPORTANCE_LOW)
         )
+        manager.createNotificationChannel(
+            NotificationChannel(RESULTS_CHANNEL, "Saved recordings", NotificationManager.IMPORTANCE_DEFAULT)
+        )
         val stop = PendingIntent.getService(
             this, 0, Intent(this, FloatingMicService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_IMMUTABLE
@@ -89,7 +101,7 @@ class FloatingMicService : Service() {
             this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE
         )
         val notification = NotificationCompat.Builder(this, CHANNEL)
-            .setSmallIcon(R.drawable.ic_mic)
+            .setSmallIcon(R.drawable.ic_mic_line)
             .setContentTitle("EchoInk floating mic is on")
             .setContentText("Tap the mic to dictate. Drag it onto the X at the bottom to close it.")
             .setContentIntent(open)
@@ -119,10 +131,92 @@ class FloatingMicService : Service() {
             y = if (settings.bubbleY >= 0) settings.bubbleY else metrics.heightPixels / 2
         }
         val mic = MicButton(this)
+        mic.pendingCount = pending.count
         mic.setOnClickListener { onTap(it) }
         mic.setOnTouchListener(DragOrTap())
         windowManager.addView(mic, params)
         button = mic
+    }
+
+    /**
+     * Asks the PC whether it is there. While it isn't, the bubble is grey and this repeats
+     * every few seconds; once it answers, waiting recordings are sent.
+     */
+    private fun checkPc(warnIfOffline: Boolean) {
+        main.removeCallbacks(recheck)
+        if (!running) return // a reply can arrive after the bubble was closed
+        network.execute {
+            val error = runCatching { EchoInkApi.check(settings) }.exceptionOrNull()
+            main.post {
+                if (error is EchoInkApi.UnreachableException) {
+                    showOffline()
+                    if (warnIfOffline) {
+                        toast("Your PC is offline. Keep talking: the recording will be sent when it's back.")
+                    }
+                } else {
+                    button?.offline = false
+                    if (error != null) toast(error.message ?: "The PC refused the connection")
+                    else if (pending.count > 0) sendPending()
+                }
+            }
+        }
+    }
+
+    private fun showOffline() {
+        if (!running) return
+        button?.offline = true
+        button?.pendingCount = pending.count
+        main.postDelayed(recheck, RECHECK_MS)
+    }
+
+    /** Sends the recordings saved while the PC was offline, oldest first. */
+    private fun sendPending() {
+        if (!running || sendingPending) return
+        sendingPending = true
+        network.execute {
+            val texts = mutableListOf<String>()
+            var offline = false
+            var refused: String? = null
+            while (true) {
+                val file = pending.oldest() ?: break
+                val result = runCatching { EchoInkApi.transcribe(settings, file.readBytes()) }
+                val error = result.exceptionOrNull()
+                if (error is EchoInkApi.UnreachableException) {
+                    offline = true
+                    break
+                }
+                if (error is EchoInkApi.RejectedException && (error.status == 401 || error.status >= 500)) {
+                    refused = error.message // keep the recording and try again later
+                    break
+                }
+                file.delete() // sent, or the PC can't use it (e.g. unreadable audio)
+                result.getOrNull()?.text?.takeIf { it.isNotBlank() }?.let { texts += it }
+            }
+            main.post {
+                sendingPending = false
+                button?.pendingCount = pending.count
+                if (texts.isNotEmpty()) deliverSaved(texts)
+                if (offline) showOffline()
+                refused?.let { toast(it) }
+            }
+        }
+    }
+
+    /** Text from saved recordings goes to the clipboard, since you may be somewhere else by now. */
+    private fun deliverSaved(texts: List<String>) {
+        val text = texts.joinToString("\n")
+        getSystemService(ClipboardManager::class.java)
+            .setPrimaryClip(ClipData.newPlainText("EchoInk", text))
+        val title = if (texts.size == 1) "Saved recording transcribed" else "${texts.size} saved recordings transcribed"
+        val notification = NotificationCompat.Builder(this, RESULTS_CHANNEL)
+            .setSmallIcon(R.drawable.ic_mic_line)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText("$text\n\n(Copied to the clipboard)"))
+            .setAutoCancel(true)
+            .build()
+        getSystemService(NotificationManager::class.java).notify(RESULTS_NOTIFICATION_ID, notification)
+        toast("Your PC is back. The saved text is on the clipboard.")
     }
 
     /** The ✕ drop target at the bottom of the screen, shown while the bubble is dragged. */
@@ -233,6 +327,7 @@ class FloatingMicService : Service() {
         }
         button?.state = MicButton.State.RECORDING
         main.postDelayed(autoStop, MAX_RECORDING_MS)
+        checkPc(warnIfOffline = true) // warns while you talk, instead of after
     }
 
     private fun finishRecording() {
@@ -245,10 +340,22 @@ class FloatingMicService : Service() {
         button?.state = MicButton.State.SENDING
         network.execute {
             val result = runCatching { EchoInkApi.transcribe(settings, wav) }
+            val offline = result.exceptionOrNull() is EchoInkApi.UnreachableException
+            if (offline) pending.add(wav)
             main.post {
                 button?.state = MicButton.State.IDLE
-                result.onSuccess { deliver(it.text) }
-                    .onFailure { toast(it.message ?: "Transcription failed") }
+                when {
+                    offline -> {
+                        showOffline()
+                        toast("Your PC is offline. The recording is saved and will be sent when it's back.")
+                    }
+                    result.isSuccess -> {
+                        button?.offline = false
+                        deliver(result.getOrThrow().text)
+                        if (pending.count > 0) sendPending()
+                    }
+                    else -> toast(result.exceptionOrNull()?.message ?: "Transcription failed")
+                }
             }
         }
     }
@@ -272,8 +379,11 @@ class FloatingMicService : Service() {
     companion object {
         const val ACTION_STOP = "com.echoink.mobile.STOP"
         private const val CHANNEL = "floating_mic"
+        private const val RESULTS_CHANNEL = "saved_recordings"
         private const val NOTIFICATION_ID = 1
+        private const val RESULTS_NOTIFICATION_ID = 2
         private const val MAX_RECORDING_MS = 60_000L
+        private const val RECHECK_MS = 15_000L
 
         @Volatile
         var running = false

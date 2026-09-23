@@ -195,6 +195,11 @@ appears (tapping the icon while the bubble is showing opens the settings); to cl
 the bubble onto the **X** that appears at the bottom of the screen, or tap **Stop** in its
 notification.
 
+If the PC can't be reached (EchoInk closed, PC asleep, no network), the bubble turns grey and
+says so when you start talking. Recordings are then kept on the phone (the bubble shows how
+many) and sent once the PC answers again; their text goes to the clipboard, with a
+notification, rather than into whatever app you have moved on to.
+
 The phone talks to `POST /v1/audio/transcriptions` on port 8765, the same shape as OpenAI's
 Whisper API with the pairing token as the API key, so other Whisper-API clients can use your
 PC too (send WAV, or install PyAV with `pip install av` for other formats). Traffic is plain

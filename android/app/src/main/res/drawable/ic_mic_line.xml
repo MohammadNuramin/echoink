@@ -1,0 +1,13 @@
+<!-- White line mic with the desktop app's button proportions (capsule, arc, stem, base). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:pathData="M8.6,5.75a3.4,3.4 0 0 1 6.8,0v5.1a3.4,3.4 0 0 1 -6.8,0z M4.64,14.25A8.5,8.5 0 0 0 19.36,14.25 M12,18.5L12,21.9 M7.75,21.9L16.25,21.9"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeWidth="1.8" />
+</vector>

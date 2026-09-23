@@ -216,6 +216,29 @@ class AudioRecorder:
 
         return wav_buffer.getvalue()
 
+    def reinit(self) -> None:
+        """Rebuild the underlying PortAudio instance.
+
+        PyAudio holds a single PortAudio handle created once at construction.
+        After the machine sleeps/wakes or a USB microphone power-cycles, that
+        handle can go stale for the life of the process, silently capturing
+        nothing on every subsequent recording. Terminating and recreating it
+        restores capture without restarting the app.
+        """
+        self.is_recording = False
+        if self.stream is not None:
+            try:
+                self.stream.stop_stream()
+                self.stream.close()
+            except Exception as e:
+                print(f"Warning: stream cleanup error during reinit: {e}")
+            self.stream = None
+        try:
+            self.audio.terminate()
+        except Exception as e:
+            print(f"Warning: PyAudio terminate error during reinit: {e}")
+        self.audio = pyaudio.PyAudio()
+
     def cleanup(self) -> None:
         """Clean up audio resources."""
         self.is_recording = False

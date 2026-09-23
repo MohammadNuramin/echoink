@@ -546,14 +546,15 @@ class RecordingWindow(QWidget):
         settings_layout.addWidget(mic_label)
         settings_layout.addWidget(self.mic_combo)
 
-        # Compute device selection (GPU is much faster; falls back to CPU)
+        # Orukeet INT8 currently runs on CPU; retain legacy stored preference values.
         device_label = QLabel("Processing")
         self.device_combo = QComboBox()
         self.device_combo.setStyleSheet(self.mic_combo.styleSheet())
-        self.device_combo.addItem("GPU (fastest, recommended)", "gpu")
-        self.device_combo.addItem("CPU (slower, no GPU needed)", "cpu")
+        self.device_combo.addItem("Orukeet INT8 (CPU)", "gpu")
+        self.device_combo.addItem("Orukeet INT8 (CPU)", "cpu")
         want = "cpu" if getattr(self.config, "compute_device", "gpu") == "cpu" else "gpu"
         self.device_combo.setCurrentIndex(1 if want == "cpu" else 0)
+        self.device_combo.setEnabled(False)
         settings_layout.addWidget(device_label)
         settings_layout.addWidget(self.device_combo)
 
@@ -1195,6 +1196,10 @@ class EchoInk:
         settings_action.triggered.connect(self._show_settings)
         menu.addAction(settings_action)
 
+        reload_action = QAction("Reload audio && model", menu)
+        reload_action.triggered.connect(self._reload_engine)
+        menu.addAction(reload_action)
+
         menu.addSeparator()
 
         if sys.platform == "win32":
@@ -1302,6 +1307,35 @@ class EchoInk:
             self._stop_recording()
         else:
             self._start_recording()
+
+    def _reload_engine(self) -> None:
+        """Rebuild audio capture and the ASR model without restarting the app.
+
+        Recovers from a stale PortAudio handle or CUDA/session state after the
+        machine sleeps/wakes or the USB mic power-cycles — the usual cause of
+        "the button works but nothing transcribes".
+        """
+        if self.is_recording:
+            try:
+                self._cancel_recording()
+            except Exception as e:
+                print(f"Reload: cancel recording failed: {e}")
+
+        try:
+            self.recorder.reinit()
+        except Exception as e:
+            print(f"Reload: recorder reinit failed: {e}")
+
+        from . import api
+        api.reset_model()
+        api.preload_model()
+
+        self.tray.showMessage(
+            "EchoInk",
+            "Audio and model reloaded.",
+            QSystemTrayIcon.MessageIcon.Information,
+            2000,
+        )
 
     def _start_recording(self) -> None:
         """Start recording audio."""

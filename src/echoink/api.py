@@ -1,19 +1,61 @@
-"""Speech-to-text using NVIDIA Parakeet-TDT-0.6B-v2 via onnx-asr (in-process, no server).
+"""Local multilingual speech-to-text using the pinned Orukeet ONNX INT8 release."""
 
-English-only, but state-of-the-art accuracy (~6% WER) with automatic punctuation
-and capitalization, and sub-second latency even on CPU. Runs through ONNX Runtime,
-so no PyTorch / NeMo dependency is required.
-"""
-
-import tempfile
+import io
 import threading
+import wave
 from pathlib import Path
 
 from .config import Config
 
-# onnx-asr model id for the pre-converted Parakeet checkpoint
-# (istupakov/parakeet-tdt-0.6b-v2-onnx on Hugging Face).
-MODEL_NAME = "nemo-parakeet-tdt-0.6b-v2"
+MODEL_NAME = "oruk/orukeet"
+MODEL_REVISION = "55a984d46f68323301837194ce647c702f55facc"
+MODEL_ARCHIVE = "onnx/sherpa-onnx-orukeet-v0.1.0-int8.tar.bz2"
+MODEL_SHA256 = "f9191f30178cc9122ce2f023bf9fefafc822028307b0efa4caff645ba3fe8d0a"
+
+
+def _model_directory() -> Path:
+    """Download and safely unpack the pinned, hash-checked ONNX release once."""
+    import hashlib
+    import shutil
+    import tarfile
+    import tempfile
+
+    from filelock import FileLock
+    from huggingface_hub import hf_hub_download
+
+    cache = Config.get_config_path().parent / "models" / MODEL_REVISION
+    cache.mkdir(parents=True, exist_ok=True)
+    target = cache / "sherpa-onnx-orukeet-v0.1.0-int8"
+    required = ("encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt")
+    with FileLock(str(cache / "download.lock")):
+        if (target / ".verified").is_file() and all((target / f).is_file() for f in required):
+            return target
+        archive = hf_hub_download(MODEL_NAME, MODEL_ARCHIVE, revision=MODEL_REVISION)
+        digest = hashlib.sha256()
+        with open(archive, "rb") as source:
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(chunk)
+        if digest.hexdigest() != MODEL_SHA256:
+            raise RuntimeError("Orukeet download failed SHA-256 verification")
+        with tempfile.TemporaryDirectory(dir=cache) as staging:
+            root = Path(staging).resolve()
+            with tarfile.open(archive, "r|bz2") as tar:
+                # Reject links, devices, and any path escaping the staging directory.
+                for member in tar:
+                    dest = (root / member.name).resolve()
+                    if not dest.is_relative_to(root) or not (member.isfile() or member.isdir()):
+                        raise RuntimeError("Unsafe entry in Orukeet archive")
+                    if hasattr(tarfile, "data_filter"):
+                        tar.extract(member, root, filter="data")
+                    else:  # Python 3.10 before extraction filters were backported
+                        tar.extract(member, root)
+            extracted = root / target.name
+            if not all((extracted / f).is_file() for f in required):
+                raise RuntimeError("Orukeet archive is missing required model files")
+            shutil.copytree(extracted, target, dirs_exist_ok=True)
+            (target / ".verified").write_text(MODEL_SHA256, encoding="ascii")
+    return target
+
 
 _model = None
 _model_lock = threading.Lock()
@@ -28,50 +70,29 @@ class WhisperAPIError(Exception):
 
 
 def _load_model(prefer: str = "gpu"):
-    """Load the Parakeet model. Downloads the ONNX weights on first run (~2.4GB).
+    """Load Orukeet's INT8 release using its supported CPU transducer runtime.
 
-    ``prefer`` is "gpu" or "cpu". "gpu" uses CUDA when available and transparently
-    falls back to CPU otherwise; "cpu" forces CPU regardless of hardware.
+    Legacy GPU preferences remain readable; this quantized integration uses CPU.
     """
     global _model_device
-    import onnx_asr
-    import onnxruntime as ort
+    import os
+    import sherpa_onnx
 
-    # Make onnxruntime find the CUDA / cuDNN shared libraries shipped as
-    # nvidia-* pip wheels (no system CUDA Toolkit install required).
-    if prefer != "cpu":
-        try:
-            ort.preload_dlls()  # available on onnxruntime-gpu >= 1.21
-        except Exception:
-            pass
-
-    available = ort.get_available_providers()
-    if prefer != "cpu" and "CUDAExecutionProvider" in available:
-        providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
-        device = "GPU"
-    else:
-        providers = ["CPUExecutionProvider"]
-        device = "CPU"
-        if prefer != "cpu":
-            print("GPU requested but CUDAExecutionProvider unavailable — using CPU.")
-
-    try:
-        model = onnx_asr.load_model(MODEL_NAME, providers=providers)
-    except Exception as e:
-        # A CUDA session can fail to initialise even when the provider lists it
-        # (missing/mismatched driver, cuDNN, etc.) — retry once on pure CPU.
-        if device == "GPU":
-            print(f"GPU model load failed ({e}); falling back to CPU.")
-            try:
-                model = onnx_asr.load_model(MODEL_NAME, providers=["CPUExecutionProvider"])
-                device = "CPU"
-            except Exception as e2:
-                raise RuntimeError(f"Failed to load Parakeet model: {e2}") from e2
-        else:
-            raise RuntimeError(f"Failed to load Parakeet model: {e}") from e
-
-    _model_device = device
-    print(f"Parakeet loaded: {MODEL_NAME} on {device}")
+    directory = _model_directory()
+    model = sherpa_onnx.OfflineRecognizer.from_transducer(
+        encoder=str(directory / "encoder.int8.onnx"),
+        decoder=str(directory / "decoder.int8.onnx"),
+        joiner=str(directory / "joiner.int8.onnx"),
+        tokens=str(directory / "tokens.txt"),
+        model_type="nemo_transducer",
+        sample_rate=16000,
+        feature_dim=128,
+        decoding_method="greedy_search",
+        num_threads=min(4, os.cpu_count() or 1),
+        provider="cpu",
+    )
+    _model_device = "CPU"
+    print(f"Orukeet loaded: {MODEL_NAME} on CPU", flush=True)
     return model
 
 
@@ -88,7 +109,7 @@ def set_device(device: str) -> None:
     with _model_lock:
         _requested_device = device
         # Force a reload if the loaded backend no longer matches the request.
-        want = "CPU" if device == "cpu" else "GPU"
+        want = "CPU"  # The released INT8 integration uses CPU for both legacy preferences.
         if _model is not None and _model_device is not None and _model_device != want:
             _model = None
             _model_device = None
@@ -117,6 +138,20 @@ def get_model():
     return _model
 
 
+def reset_model() -> None:
+    """Drop the loaded model and clear any cached load error.
+
+    The next call to get_model() reloads from scratch on the requested device.
+    Used by the tray "Reload" action to rebuild stale CUDA/session state after
+    the machine sleeps/wakes without restarting the whole app.
+    """
+    global _model, _model_error, _model_device
+    with _model_lock:
+        _model = None
+        _model_error = None
+        _model_device = None
+
+
 def preload_model():
     """Start loading the model in background on app startup."""
     def _preload():
@@ -128,7 +163,7 @@ def preload_model():
 
 
 class WhisperClient:
-    """Transcription client using Parakeet (onnx-asr) running in-process.
+    """Transcription client using Orukeet (sherpa-onnx) running in-process.
 
     Name kept for backwards compatibility with the rest of the app.
     """
@@ -139,24 +174,27 @@ class WhisperClient:
     def transcribe_sync(self, audio_data: bytes) -> str:
         """Transcribe audio bytes. Blocks until model is ready and transcription is done.
 
-        Note: Parakeet-TDT-0.6B-v2 is English-only, so ``config.language`` is ignored.
+        Orukeet detects the spoken language automatically; ``config.language`` is ignored.
         """
         if not audio_data or len(audio_data) < 1000:
             return ""
 
         model = get_model()
 
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-            f.write(audio_data)
-            tmp_path = f.name
-
         try:
-            text = model.recognize(tmp_path)
-            return (text or "").strip()
+            import numpy as np
+
+            with wave.open(io.BytesIO(audio_data), "rb") as wav:
+                if wav.getsampwidth() != 2:
+                    raise ValueError("Expected 16-bit PCM WAV audio")
+                sample_rate = wav.getframerate()
+                channels = wav.getnchannels()
+                samples = np.frombuffer(wav.readframes(wav.getnframes()), dtype="<i2")
+                samples = samples.astype(np.float32).reshape(-1, channels).mean(axis=1)
+                samples /= 32768.0
+            stream = model.create_stream()
+            stream.accept_waveform(sample_rate, samples)
+            model.decode_stream(stream)
+            return (stream.result.text or "").strip()
         except Exception as e:
             raise WhisperAPIError(f"Transcription failed: {e}") from e
-        finally:
-            try:
-                Path(tmp_path).unlink()
-            except Exception:
-                pass

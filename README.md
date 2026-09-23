@@ -19,8 +19,8 @@
 - **Floating mic button** — always-on-top orange button, drag anywhere on screen
 - **Global hotkey** — start/stop recording from any application
 - **Animated waveform** — see your audio levels in real time
-- **Built-in Whisper model** — runs fully offline, no internet after first download
-- **GPU + CPU** — uses CUDA automatically, falls back to CPU if unavailable
+- **Built-in Orukeet model** — runs fully offline, no internet after first download
+- **Local CPU inference** - Orukeet INT8 through sherpa-onnx
 - **Auto-type** — transcribed text typed directly into whatever window has focus
 - **Clipboard copy** — text also copied to clipboard
 - **System tray** — runs quietly in background
@@ -40,7 +40,7 @@ pip install -e .
 echoink
 ```
 
-An orange floating button appears at the bottom-right of your screen. The first launch downloads the Whisper model (~460 MB).
+An orange floating button appears at the bottom-right of your screen. The first launch downloads the Orukeet model (~487 MB download, ~672 MB extracted).
 
 ### Linux (Ubuntu/Debian)
 
@@ -114,19 +114,10 @@ EOF
 
 **macOS** — System Preferences → Users & Groups → Login Items.
 
-## GPU Support
+## Processing
 
-EchoInk uses CUDA automatically on NVIDIA GPUs. Requirements:
-
-- NVIDIA GPU
-- CUDA Toolkit 12.x (provides `cublas64_12.dll` on Windows)
-
-If CUDA is not available, EchoInk falls back to CPU automatically — no configuration needed.
-
-| Device | Typical transcription latency |
-|--------|-------------------------------|
-| NVIDIA GPU (CUDA 12) | ~0.5 seconds |
-| CPU (int8) | 2–5 seconds |
+Orukeet uses its 8-bit ONNX release on CPU. CUDA is not required.
+The Processing setting shows the active backend; legacy GPU preferences also use CPU.
 
 ## Configuration
 
@@ -135,7 +126,7 @@ Config file: `%APPDATA%\echoink\config.json` (Windows) or `~/.config/echoink/con
 | Key | Default | Description |
 |-----|---------|-------------|
 | `hotkey` | `["ctrl","alt","w"]` | Global recording hotkey |
-| `language` | `"en"` | Transcription language |
+| `language` | `"en"` | Legacy setting; Orukeet detects language automatically |
 | `auto_paste` | `true` | Type text into focused window |
 | `copy_to_clipboard` | `true` | Also copy to clipboard |
 | `waveform_color` | `"#84cc16"` | Waveform color (hex) |
@@ -146,7 +137,6 @@ Config file: `%APPDATA%\echoink\config.json` (Windows) or `~/.config/echoink/con
 
 **Windows: App won't start** — check `%APPDATA%\echoink\crash.log`.
 
-**Windows: No GPU transcription** — install [CUDA Toolkit 12.x](https://developer.nvidia.com/cuda-downloads). EchoInk falls back to CPU automatically.
 
 **Linux: Hotkey not working** — change the hotkey in config if it conflicts with another app.
 
@@ -157,3 +147,19 @@ Config file: `%APPDATA%\echoink\config.json` (Windows) or `~/.config/echoink/con
 ## License
 
 MIT License — see [LICENSE](LICENSE) for details.
+
+## Speech model
+
+EchoInk uses [Orukeet by Oruk AI](https://huggingface.co/oruk/orukeet), derived from
+NVIDIA Parakeet TDT 0.6B v3, with automatic recognition across 25 languages.
+The pinned ONNX INT8 release runs locally on CPU through sherpa-onnx. Existing GPU
+preferences are accepted but use CPU with this backend; the optional GPU dependencies
+are legacy and are not needed for Orukeet.
+
+On first launch, the app downloads revision
+`55a984d46f68323301837194ce647c702f55facc`, verifies its SHA-256, and extracts it
+under the EchoInk configuration folder's `models` directory. Later launches work offline.
+The download requires about 487 MB; keep additional space for extraction and the cache.
+
+Model weights are licensed under CC BY-SA 4.0, separately from EchoInk's MIT code.
+The archive's `LICENSE-WEIGHTS` and `NOTICE.md` are retained alongside the model.

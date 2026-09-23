@@ -27,18 +27,17 @@ dependencies = [
     "PyQt6>=6.4.0",
     "pyaudio>=0.2.13",
     "numpy>=1.24.0",
-    "onnx-asr>=0.11.0",
-    "onnxruntime>=1.17.0",
+    "sherpa-onnx==1.13.8",
+    "huggingface-hub>=0.27.0",
+    "filelock>=3.0",
     "pynput>=1.7.6",
-    "python-xlib>=0.33",
+    "python-xlib>=0.33; sys_platform == 'linux'",
     "pyautogui>=0.9.54",
 ]
 
 [project.optional-dependencies]
-# GPU acceleration (NVIDIA CUDA). Swaps the CPU onnxruntime for the CUDA build
-# and pulls in the CUDA 12 / cuDNN 9 runtime wheels, so no system CUDA Toolkit
-# install is needed. Install with:  pip install "echoink[gpu]"
-# The app defaults to GPU and transparently falls back to CPU if unavailable.
+# Legacy GPU dependencies retained for existing installation commands.
+# Orukeet INT8 uses sherpa-onnx on CPU and does not need this extra.
 gpu = [
     "onnxruntime-gpu>=1.20.0",
     "nvidia-cudnn-cu12>=9,<10",

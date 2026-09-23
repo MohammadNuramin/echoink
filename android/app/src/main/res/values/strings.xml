@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">EchoInk</string>
+    <string name="accessibility_label">EchoInk dictation</string>
+    <string name="accessibility_description">Types the text you dictate with the EchoInk floating mic into the text field you are using. EchoInk only looks up which text field has focus when you dictate; it does not read or collect anything else.</string>
+</resources>

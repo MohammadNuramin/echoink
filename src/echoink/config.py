@@ -73,6 +73,11 @@ class Config:
     external_integration: bool = True  # Enable file-based external tool integration
     integration_timeout: float = 30.0  # Max seconds to wait for ready signal
 
+    # Phone app access: an HTTP server the EchoInk Android app sends recordings to
+    phone_server: bool = False
+    phone_server_port: int = 8765
+    phone_token: str = ""  # pairing token, generated when phone access is first enabled
+
     # History (recent transcriptions)
     history: list[HistoryEntry] = field(default_factory=list)
     history_max: int = 20

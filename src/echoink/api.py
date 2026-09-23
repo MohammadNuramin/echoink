@@ -264,17 +264,28 @@ class WhisperClient:
         "auto", which uses Bangla when the recording's Bangla score beats English by
         more than ``config.bangla_margin``. Without the Bangla model, auto means English.
         """
+        return self.transcribe_with_language(audio_data)[0]
+
+    def transcribe_with_language(
+        self, audio_data: bytes, mode: str | None = None
+    ) -> tuple[str, str]:
+        """Like transcribe_sync, but also return which model was used ("en" or "bn").
+
+        ``mode`` overrides ``config.language_mode`` for this call.
+        """
         if not audio_data or len(audio_data) < 1000:
-            return ""
+            return "", ""
 
         try:
             samples, sample_rate = _read_wav(audio_data)
         except Exception as e:
             raise WhisperAPIError(f"Transcription failed: {e}") from e
 
-        mode = self.config.language_mode if self.config.language_mode in LANGUAGE_MODES else "auto"
+        mode = mode or self.config.language_mode
+        if mode not in LANGUAGE_MODES:
+            mode = "auto"
         if mode == "bn":
-            return _transcribe_bangla(samples, sample_rate)
+            return _transcribe_bangla(samples, sample_rate), "bn"
 
         # Start Orukeet on the CPU straight away; in auto mode the GPU checks the
         # language meanwhile, so detection adds no delay to English dictation.
@@ -284,5 +295,5 @@ class WhisperClient:
             and bangla.is_installed()
             and _sounds_bangla(samples, sample_rate, self.config.bangla_margin)
         ):
-            return _transcribe_bangla(samples, sample_rate)
-        return english.result()
+            return _transcribe_bangla(samples, sample_rate), "bn"
+        return english.result(), "en"

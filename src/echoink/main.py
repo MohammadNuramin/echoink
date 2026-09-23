@@ -1182,6 +1182,11 @@ class EchoInk:
             if not self.integration_server.start():
                 self.integration_server = None
 
+        # HTTP server for the EchoInk Android app (tray > Phone access)
+        self.phone_server = None
+        if self.config.phone_server:
+            self._set_phone_access(True)
+
     @staticmethod
     def _get_app_icon() -> QIcon:
         """Load the app icon from assets/echoink.ico."""
@@ -1219,6 +1224,10 @@ class EchoInk:
         settings_action = QAction("Settings...", menu)
         settings_action.triggered.connect(self._show_settings)
         menu.addAction(settings_action)
+
+        phone_action = QAction("Phone access...", menu)
+        phone_action.triggered.connect(self._show_phone_access)
+        menu.addAction(phone_action)
 
         reload_action = QAction("Reload audio && model", menu)
         reload_action.triggered.connect(self._reload_engine)
@@ -1331,6 +1340,42 @@ class EchoInk:
             self._stop_recording()
         else:
             self._start_recording()
+
+    def _set_phone_access(self, on: bool) -> bool:
+        """Start or stop the phone app server; return whether it is running."""
+        if not on:
+            if self.phone_server:
+                self.phone_server.stop()
+                self.phone_server = None
+            return False
+        if self.phone_server:
+            return True
+        from .phone_dialog import new_token
+        from .phone_server import PhoneServer
+
+        if not self.config.phone_token:
+            self.config.phone_token = new_token()
+            self.config.save()
+        server = PhoneServer(self.config)
+        try:
+            server.start()
+        except OSError as e:
+            self.tray.showMessage(
+                "EchoInk",
+                f"Phone access could not use port {self.config.phone_server_port}: {e}",
+                QSystemTrayIcon.MessageIcon.Warning,
+                5000,
+            )
+            return False
+        self.phone_server = server
+        return True
+
+    def _show_phone_access(self) -> None:
+        """Show the phone pairing dialog (QR code for the Android app)."""
+        from .phone_dialog import PhoneAccessDialog
+
+        running = self.phone_server is not None
+        PhoneAccessDialog(self.config, running, self._set_phone_access).exec()
 
     def _reload_engine(self) -> None:
         """Rebuild audio capture and the speech models without restarting the app.
@@ -1738,6 +1783,7 @@ class EchoInk:
             self.hotkey_manager.stop()
         if self.integration_server:
             self.integration_server.stop()
+        self._set_phone_access(False)
         self.recorder.cleanup()
         self.app.quit()
 

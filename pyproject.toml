@@ -31,6 +31,7 @@ dependencies = [
     "onnx-asr>=0.11.0,<0.12",
     "huggingface-hub>=0.27.0",
     "filelock>=3.0",
+    "segno>=1.5",
     "pynput>=1.7.6",
     "python-xlib>=0.33; sys_platform == 'linux'",
     "pyautogui>=0.9.54",

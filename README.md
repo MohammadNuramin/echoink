@@ -22,6 +22,7 @@
 - **Built-in Orukeet model** — runs fully offline, no internet after first download
 - **Local CPU inference** - Orukeet INT8 through sherpa-onnx
 - **English + Bangla** — each recording is routed to the right model automatically; Bangla runs on the GPU (see [Bangla](#bangla))
+- **Android phone app** — a floating mic over any app on your phone, transcribed by your PC (see [Phone](#phone-android))
 - **Auto-type** — transcribed text typed directly into whatever window has focus
 - **Clipboard copy** — text also copied to clipboard
 - **System tray** — runs quietly in background
@@ -171,6 +172,32 @@ over three other open Bangla models tested on the same clips: `hishab/titu_stt_b
 On Windows, Bangla text is typed with Unicode keyboard input. On Linux and macOS it is copied
 to the clipboard instead, because the key-press backends there only handle ASCII.
 
+## Phone (Android)
+
+The Android app puts a floating mic over every app on your phone. The phone only records;
+EchoInk on your PC transcribes (English and Bangla, as above) and the text is typed into the
+text field you are using on the phone.
+
+1. **PC:** tray icon → **Phone access...** → tick *Let the EchoInk phone app use this PC*.
+   If Windows asks, allow Python on **private** networks.
+2. **Phone:** turn on [Tailscale](https://tailscale.com) (works anywhere) or join the same
+   Wi-Fi, open the address shown in the dialog (e.g. `http://100.x.y.z:8765`) in the browser
+   and install the app.
+3. **In the app:** tap **Scan pairing QR** and scan the code in the Phone access dialog, then
+   grant microphone, notifications, *display over other apps* and **Accessibility → EchoInk
+   dictation**. On Android 13+, if that switch is greyed out: App info → ⋮ → *Allow restricted
+   settings*, then try again.
+4. Tap **Start floating mic**. Tap the bubble to record and tap it again to insert the text
+   (if no text field is focused it goes to the clipboard). Drag the bubble to move it; stop it
+   from its notification.
+
+The phone talks to `POST /v1/audio/transcriptions` on port 8765, the same shape as OpenAI's
+Whisper API with the pairing token as the API key, so other Whisper-API clients can use your
+PC too (send WAV, or install PyAV with `pip install av` for other formats). Traffic is plain
+HTTP: over Tailscale it is encrypted by WireGuard, on a home network it is not. **New token**
+in the dialog unpairs every phone. To build the app yourself, see
+[android/README.md](android/README.md).
+
 ## Processing
 
 Orukeet uses its 8-bit ONNX release on CPU. CUDA is not required for English.
@@ -188,6 +215,9 @@ Config file: `%APPDATA%\echoink\config.json` (Windows) or `~/.config/echoink/con
 | `bangla_margin` | `1.0` | How far Bangla must out-score English before Auto picks Bangla |
 | `compute_device` | `"gpu"` | Where Bangla and language detection run: `"gpu"` or `"cpu"` |
 | `language` | `"en"` | Legacy setting; replaced by `language_mode` |
+| `phone_server` | `false` | Serve the Android app (tray → Phone access) |
+| `phone_server_port` | `8765` | Port the phone app connects to |
+| `phone_token` | `""` | Pairing token; created when phone access is turned on |
 | `auto_paste` | `true` | Type text into focused window |
 | `copy_to_clipboard` | `true` | Also copy to clipboard |
 | `waveform_color` | `"#84cc16"` | Waveform color (hex) |

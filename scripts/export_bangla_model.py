@@ -1,8 +1,8 @@
 r"""Convert the Bangla speech model to ONNX so EchoInk can run it without NeMo.
 
 EchoInk runs every speech model through ONNX Runtime and has no PyTorch or NeMo
-dependency. The Bangla model (speaklar/speaklar_stt_bn_fastconformer, a NeMo
-FastConformer CTC checkpoint) is only published in NeMo format, so it has to be
+dependency. The Bangla model (Bhatiyali, kazalbrur/bangla-asr-conformer-120m-dialects,
+a NeMo Conformer-CTC checkpoint) is only published in NeMo format, so it has to be
 converted once, in an environment that has NeMo. Docker is the easiest way; from
 the repository root:
 
@@ -10,7 +10,7 @@ the repository root:
         bash -c "pip install torch==2.7.1 --index-url https://download.pytorch.org/whl/cpu \
             && pip install 'nemo_toolkit[asr]==3.0.0' torch==2.7.1 onnxruntime \
             && python /scripts/export_bangla_model.py \
-                --out /models/speaklar-bn-fastconformer-onnx"
+                --out /models/bangla-conformer-120m-dialects-onnx"
 
 <models dir> is %APPDATA%\echoink\models on Windows and ~/.config/echoink/models
 elsewhere. EchoInk loads the model on its next start.
@@ -20,14 +20,13 @@ import argparse
 import json
 from pathlib import Path
 
-REPO_ID = "speaklar/speaklar_stt_bn_fastconformer"
-REVISION = "8773966e4a0b6389be318e42ebc84b957c71067e"
-CHECKPOINT = "speaklar_stt_bn_fastconformer.nemo"
+REPO_ID = "kazalbrur/bangla-asr-conformer-120m-dialects"
+REVISION = "b6c23d330a6b1cf8ff08af9f875298f9b485bff9"
+CHECKPOINT = "bangla-stt-conformer-120m-dialects.nemo"
 
 NOTICE = f"""\
-Bangla speech model: https://huggingface.co/{REPO_ID} (revision {REVISION})
-Author: Munzur ul Mamun (speaklar.com)
-License: CC BY-NC 4.0 (non-commercial use only), separately from EchoInk's MIT code.
+Bangla speech model: Bhatiyali, https://huggingface.co/{REPO_ID} (revision {REVISION})
+License: Apache 2.0.
 Converted from the NeMo checkpoint to ONNX by EchoInk's scripts/export_bangla_model.py;
 the weights are unchanged.
 """
@@ -106,7 +105,7 @@ def main() -> None:
 
     if args.verify_wav:
         _verify(model, onnx_path, args.verify_wav)
-    print(f"Exported {REPO_ID} to {out}")
+    print(f"Exported {args.nemo or REPO_ID} to {out}")
 
 
 if __name__ == "__main__":

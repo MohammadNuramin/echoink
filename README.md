@@ -124,7 +124,8 @@ speak English and you get English, speak Bangla and you get Bangla script.
 
 For each recording, Whisper small's language-ID step compares how Bangla-like and how
 English-like the audio is. If Bangla wins by more than `bangla_margin`, the recording goes to
-the [speaklar Bangla FastConformer](https://huggingface.co/speaklar/speaklar_stt_bn_fastconformer);
+[Bhatiyali](https://huggingface.co/kazalbrur/bangla-asr-conformer-120m-dialects), a Bangla
+Conformer-CTC model trained on broadcast, spontaneous and Bangladeshi dialect speech;
 otherwise it goes to Orukeet. Orukeet starts on the CPU at the same moment the GPU checks the
 language, so the check adds no delay to English.
 
@@ -138,12 +139,12 @@ language, so the check adds no delay to English.
 
    ```powershell
    # Windows (PowerShell)
-   docker run --rm -v "$env:APPDATA\echoink\models:/models" -v "${PWD}\scripts:/scripts:ro" python:3.11 bash -c "pip install torch==2.7.1 --index-url https://download.pytorch.org/whl/cpu && pip install 'nemo_toolkit[asr]==3.0.0' torch==2.7.1 onnxruntime && python /scripts/export_bangla_model.py --out /models/speaklar-bn-fastconformer-onnx"
+   docker run --rm -v "$env:APPDATA\echoink\models:/models" -v "${PWD}\scripts:/scripts:ro" python:3.11 bash -c "pip install torch==2.7.1 --index-url https://download.pytorch.org/whl/cpu && pip install 'nemo_toolkit[asr]==3.0.0' torch==2.7.1 onnxruntime && python /scripts/export_bangla_model.py --out /models/bangla-conformer-120m-dialects-onnx"
    ```
 
    ```bash
    # Linux / macOS
-   docker run --rm -v "$HOME/.config/echoink/models:/models" -v "$PWD/scripts:/scripts:ro" python:3.11 bash -c "pip install torch==2.7.1 --index-url https://download.pytorch.org/whl/cpu && pip install 'nemo_toolkit[asr]==3.0.0' torch==2.7.1 onnxruntime && python /scripts/export_bangla_model.py --out /models/speaklar-bn-fastconformer-onnx"
+   docker run --rm -v "$HOME/.config/echoink/models:/models" -v "$PWD/scripts:/scripts:ro" python:3.11 bash -c "pip install torch==2.7.1 --index-url https://download.pytorch.org/whl/cpu && pip install 'nemo_toolkit[asr]==3.0.0' torch==2.7.1 onnxruntime && python /scripts/export_bangla_model.py --out /models/bangla-conformer-120m-dialects-onnx"
    ```
 
 3. Restart EchoInk. The first start downloads the Whisper small language-ID model
@@ -154,16 +155,18 @@ The settings panel has a **Language** choice (Auto: English + Bangla, English, B
 
 ### Speed and accuracy
 
-On an RTX 4090, Bangla text is ready about 0.05 s after you stop speaking in Bangla mode and
-about 0.17 s in Auto mode (language check included). English is unchanged, since Orukeet runs on
+On an RTX 4090, Bangla text is ready about 0.06 s after you stop speaking in Bangla mode and
+about 0.15 s in Auto mode (language check included). English is unchanged, since Orukeet runs on
 the CPU either way. In testing, the language check picked the right model for all 141
 full-length Bangla clips and 98% of 214 English ones (including South Asian accents); very
 short phrases (about 1.5 s) are less reliable. Raise `bangla_margin` if English is taken for
 Bangla, lower it if Bangla is taken for English.
 
-The speaklar model was trained on audiobook data. It transcribes its own sample clip perfectly,
-but on real recordings it makes many mistakes (about 40–50% character error rate on
-Bangladeshi news and YouTube clips), so expect to correct its output.
+On Bangladeshi news and YouTube clips, Bhatiyali gets about 86% of characters and 73% of
+words right (CER 13.7%, WER 27%). It was picked
+over three other open Bangla models tested on the same clips: `hishab/titu_stt_bn_fastconformer`
+(CER 15.3%), its sibling `kazalbrur/Bangla-asr-fastconformer-116m-dialects` (14.1%) and
+`speaklar/speaklar_stt_bn_fastconformer` (32%). Output has no punctuation.
 
 On Windows, Bangla text is typed with Unicode keyboard input. On Linux and macOS it is copied
 to the clipboard instead, because the key-press backends there only handle ASCII.
@@ -222,9 +225,9 @@ The download requires about 487 MB; keep additional space for extraction and the
 Model weights are licensed under CC BY-SA 4.0, separately from EchoInk's MIT code.
 The archive's `LICENSE-WEIGHTS` and `NOTICE.md` are retained alongside the model.
 
-The optional Bangla model, [speaklar/speaklar_stt_bn_fastconformer](https://huggingface.co/speaklar/speaklar_stt_bn_fastconformer)
-by Munzur ul Mamun, is licensed **CC BY-NC 4.0 (non-commercial use only)**. EchoInk does
-not ship it; the export script downloads revision `8773966e4a0b6389be318e42ebc84b957c71067e`
+The optional Bangla model, [Bhatiyali](https://huggingface.co/kazalbrur/bangla-asr-conformer-120m-dialects)
+(`kazalbrur/bangla-asr-conformer-120m-dialects`), is licensed Apache 2.0. EchoInk does not
+ship it; the export script downloads revision `b6c23d330a6b1cf8ff08af9f875298f9b485bff9`
 and writes a `NOTICE.md` next to the converted model. Language detection uses
 [Whisper small](https://huggingface.co/openai/whisper-small) (Apache 2.0) in the ONNX
 conversion from `onnx-community/whisper-small`, pinned to revision

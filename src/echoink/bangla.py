@@ -2,8 +2,9 @@
 
 Both run in-process through ONNX Runtime, on the GPU (CUDA) when available:
 
-* Bangla ASR: speaklar/speaklar_stt_bn_fastconformer, a NeMo FastConformer CTC
-  model. It is only published as a NeMo checkpoint, so scripts/export_bangla_model.py
+* Bangla ASR: Bhatiyali (kazalbrur/bangla-asr-conformer-120m-dialects), a NeMo
+  Conformer-CTC model trained on broadcast, spontaneous and Bangladeshi dialect
+  speech. It is only published as a NeMo checkpoint, so scripts/export_bangla_model.py
   converts it to ONNX once, into the EchoInk models folder.
 * Language detection: Whisper small's language-ID step, comparing only the Bangla
   and English scores of each recording.
@@ -17,7 +18,7 @@ import numpy as np
 
 from .config import Config
 
-MODEL_DIRNAME = "speaklar-bn-fastconformer-onnx"
+MODEL_DIRNAME = "bangla-conformer-120m-dialects-onnx"
 DETECTOR_REPO = "onnx-community/whisper-small"
 DETECTOR_REVISION = "36050c46d777d46dc4b5f43f6d90574fc38f8732"
 
@@ -61,7 +62,7 @@ def _load(model_class, device: str):
 
 
 class BanglaRecognizer:
-    """The speaklar FastConformer CTC model, run through onnx-asr."""
+    """The Bhatiyali Conformer-CTC model, run through onnx-asr."""
 
     def __init__(self, providers: list, backend: str):
         if not is_installed():
@@ -81,7 +82,7 @@ class BanglaRecognizer:
     def transcribe(self, samples: np.ndarray) -> str:
         """Transcribe 16 kHz mono float32 audio."""
         text = self._model.recognize(samples)
-        # The model emits <unk> at pauses (its vocabulary has no punctuation).
+        # Treat any <unk> token (e.g. a sound the vocabulary lacks) as a word break.
         return " ".join(text.replace("<unk>", " ").split())
 
 

@@ -188,8 +188,12 @@ text field you are using on the phone.
    dictation**. On Android 13+, if that switch is greyed out: App info → ⋮ → *Allow restricted
    settings*, then try again.
 4. Tap **Start floating mic**. Tap the bubble to record and tap it again to insert the text
-   (if no text field is focused it goes to the clipboard). Drag the bubble to move it; stop it
-   from its notification.
+   (if no text field is focused it goes to the clipboard). Drag the bubble to move it.
+
+After setup, EchoInk opens and closes like a regular app: tap its icon and the mic bubble
+appears (tapping the icon while the bubble is showing opens the settings); to close it, drag
+the bubble onto the **X** that appears at the bottom of the screen, or tap **Stop** in its
+notification.
 
 The phone talks to `POST /v1/audio/transcriptions` on port 8765, the same shape as OpenAI's
 Whisper API with the pairing token as the API key, so other Whisper-API clients can use your

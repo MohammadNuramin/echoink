@@ -84,8 +84,8 @@ class MainActivity : Activity() {
         }
         tokenField = EditText(this).apply {
             hint = "Pairing token"
+            // Password input is single-line already; setting isSingleLine afterwards would unmask it.
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-            isSingleLine = true
             setText(settings.token)
         }
         column.addView(serverField)
@@ -107,7 +107,10 @@ class MainActivity : Activity() {
 
         toggle = button("") { toggleFloatingMic() }
         column.addView(toggle, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(24) })
-        column.addView(text("Tap the mic to start, tap again to insert the text. Drag it to move it."))
+        column.addView(text(
+            "Tap the mic to start, tap again to insert the text. Drag it to move it, or onto the X " +
+                "at the bottom to close it. After this, tapping the EchoInk icon brings the mic back."
+        ))
 
         return ScrollView(this).apply {
             fitsSystemWindows = true // Android 15 draws apps edge to edge
@@ -188,7 +191,11 @@ class MainActivity : Activity() {
             !settings.isPaired -> toast("Pair with your PC first")
             !hasMicrophone() -> toast("Allow the microphone first")
             !SystemSettings.canDrawOverlays(this) -> toast("Allow display over other apps first")
-            else -> startForegroundService(service)
+            else -> {
+                startForegroundService(service)
+                finish() // back to whatever app you were using, with the mic on top
+                return
+            }
         }
         toggle.postDelayed({ refresh() }, 400)
     }

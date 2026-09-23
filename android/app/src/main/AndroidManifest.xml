@@ -21,14 +21,24 @@
             android:name="com.google.mlkit.vision.DEPENDENCIES"
             android:value="barcode_ui" />
 
+        <!-- The home-screen icon: shows the floating mic straight away once set up. -->
         <activity
-            android:name=".MainActivity"
+            android:name=".LaunchActivity"
+            android:excludeFromRecents="true"
             android:exported="true"
-            android:launchMode="singleTask">
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.NoDisplay">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:launchMode="singleTask">
             <!-- Pairing link from the desktop app's QR code: echoink://pair?url=...&token=... -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />

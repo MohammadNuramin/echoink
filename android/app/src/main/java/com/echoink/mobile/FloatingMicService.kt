@@ -24,6 +24,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import java.util.concurrent.Executors
 import kotlin.math.abs
+import kotlin.math.hypot
 
 /**
  * Shows the floating mic over other apps. Tap it to record, tap again to send the
@@ -37,6 +38,7 @@ class FloatingMicService : Service() {
     private lateinit var windowManager: WindowManager
     private lateinit var params: WindowManager.LayoutParams
     private var button: MicButton? = null
+    private var closeTarget: CloseTarget? = null
     private val recorder = AudioRecorder()
     private val network = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
@@ -67,6 +69,7 @@ class FloatingMicService : Service() {
         running = false
         main.removeCallbacks(autoStop)
         if (recorder.isRecording) recorder.stop()
+        hideCloseTarget()
         button?.let { windowManager.removeView(it) }
         button = null
         network.shutdown()
@@ -88,7 +91,7 @@ class FloatingMicService : Service() {
         val notification = NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_mic)
             .setContentTitle("EchoInk floating mic is on")
-            .setContentText("Tap the mic to dictate, tap again to insert the text.")
+            .setContentText("Tap the mic to dictate. Drag it onto the X at the bottom to close it.")
             .setContentIntent(open)
             .addAction(0, "Stop", stop)
             .setOngoing(true)
@@ -122,7 +125,40 @@ class FloatingMicService : Service() {
         button = mic
     }
 
-    /** Drags the bubble around; a touch that doesn't move counts as a tap. */
+    /** The ✕ drop target at the bottom of the screen, shown while the bubble is dragged. */
+    private fun showCloseTarget() {
+        if (closeTarget != null) return
+        val density = resources.displayMetrics.density
+        val size = (72 * density).toInt()
+        val target = CloseTarget(this)
+        windowManager.addView(target, WindowManager.LayoutParams(
+            size, size,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            y = (56 * density).toInt()
+        })
+        closeTarget = target
+    }
+
+    private fun hideCloseTarget() {
+        closeTarget?.let { windowManager.removeView(it) }
+        closeTarget = null
+    }
+
+    private fun isOverCloseTarget(rawX: Float, rawY: Float): Boolean {
+        val target = closeTarget ?: return false
+        if (target.width == 0) return false
+        val location = IntArray(2)
+        target.getLocationOnScreen(location)
+        val cx = location[0] + target.width / 2f
+        val cy = location[1] + target.height / 2f
+        return hypot(rawX - cx, rawY - cy) < target.width
+    }
+
+    /** Drags the bubble around (drop it on the ✕ to close); a touch that doesn't move is a tap. */
     private inner class DragOrTap : View.OnTouchListener {
         private val slop = ViewConfiguration.get(this@FloatingMicService).scaledTouchSlop
         private var downX = 0f
@@ -143,21 +179,33 @@ class FloatingMicService : Service() {
                 MotionEvent.ACTION_MOVE -> {
                     val dx = event.rawX - downX
                     val dy = event.rawY - downY
-                    if (!dragging && (abs(dx) > slop || abs(dy) > slop)) dragging = true
+                    if (!dragging && (abs(dx) > slop || abs(dy) > slop)) {
+                        dragging = true
+                        showCloseTarget()
+                    }
                     if (dragging) {
                         params.x = startX + dx.toInt()
                         params.y = startY + dy.toInt()
                         windowManager.updateViewLayout(view, params)
+                        val near = isOverCloseTarget(event.rawX, event.rawY)
+                        if (near && closeTarget?.near == false) {
+                            view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                        }
+                        closeTarget?.near = near
                     }
                 }
                 MotionEvent.ACTION_UP -> {
-                    if (dragging) {
+                    if (!dragging) {
+                        view.performClick()
+                    } else if (closeTarget?.near == true) {
+                        stopSelf()
+                    } else {
                         settings.bubbleX = params.x
                         settings.bubbleY = params.y
-                    } else {
-                        view.performClick()
                     }
+                    hideCloseTarget()
                 }
+                MotionEvent.ACTION_CANCEL -> hideCloseTarget()
             }
             return true
         }

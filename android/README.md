@@ -22,9 +22,12 @@ volume there (`-v echoink-android-home:/root/.android`) so later builds install 
 
 ## How it works
 
-- `FloatingMicService` is a microphone foreground service, started from the app's screen,
-  that shows the bubble (`MicButton`) with `SYSTEM_ALERT_WINDOW`. Tap to record 16 kHz WAV
-  (`AudioRecorder`), tap again to send it to `POST /v1/audio/transcriptions` on the PC.
+- `LaunchActivity` is the home-screen icon: once set up it starts the bubble without showing
+  a screen, otherwise it opens the setup screen (`MainActivity`).
+- `FloatingMicService` is a microphone foreground service, started from one of those
+  activities, that shows the bubble (`MicButton`) with `SYSTEM_ALERT_WINDOW`. Tap to record
+  16 kHz WAV (`AudioRecorder`), tap again to send it to `POST /v1/audio/transcriptions` on
+  the PC. Dropping the bubble on the `CloseTarget` at the bottom of the screen stops it.
 - `TextInsertService` is an accessibility service that pastes the text at the cursor of the
   focused field (falling back to setting the text), or leaves it on the clipboard.
 - Pairing reads `echoink://pair?url=...&token=...` from the QR code in the desktop app's
